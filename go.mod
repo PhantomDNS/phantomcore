@@ -1,3 +1,3 @@
-module github.com/lopster568/PhantomDNS
+module gitlab/guardian
 
 go 1.23.0

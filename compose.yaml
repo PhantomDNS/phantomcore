@@ -1,0 +1,33 @@
+services:
+  dataplane:
+    build:
+      context: .
+      dockerfile: docker/dataplane.Dockerfile
+    container_name: phantom-dataplane
+    restart: unless-stopped
+    ports:
+      - "1053:53/udp"
+      - "1053:53/tcp"
+    cap_add:
+      - NET_BIND_SERVICE # allow binding to low ports
+    networks:
+      - phantom-net
+    volumes:
+      - ./data:/app/data
+
+  controlplane:
+    build:
+      context: .
+      dockerfile: docker/controlplane.Dockerfile
+    container_name: phantom-controlplane
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    networks:
+      - phantom-net
+    volumes:
+      - ./data:/app/data
+
+networks:
+  phantom-net:
+    driver: bridge
