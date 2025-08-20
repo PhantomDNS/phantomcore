@@ -21,6 +21,10 @@ func makeServer() (*dns.Server, *dns.Server) {
 }
 
 func RunServer() {
+	// Assign our custom handler to process DNS requests
+	dns.HandleFunc(".", handleDnsRequest)
+
+	// Setting up the server here
 	tcpSrv, udpSrv := makeServer()
 	go func() {
 		log.Println("Starting TCP server on", tcpSrv.Addr)
