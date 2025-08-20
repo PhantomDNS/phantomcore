@@ -16,16 +16,16 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	domain := r.Question[0].Name
 	logger.Log.Infof("Received request for domain: %s", domain)
 
+	// Query the upstream resolver and log the response
 	client := new(dns.Client)
 	resp, _, err := client.Exchange(r, config.DefaultConfig.DataPlane.UpstreamResolvers[0])
-	if err != nil {
-		logger.Log.Errorf("Failed to query upstream resolver: %v", err)
 
-		// Avoid silent dropping of query which makes it hard to debug for the client
+	if err != nil {
+		logger.Log.Infof("Forwarding %s to upstream %s", domain, config.DefaultConfig.DataPlane.UpstreamResolvers[0])
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeServerFailure)
 		if err := w.WriteMsg(m); err != nil {
-			logger.Log.Errorf("Failed to write response for dropped query: %v", err)
+			logger.Log.Errorf("Failed to write response: %v", err)
 		}
 		return
 	}
@@ -35,5 +35,5 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	logger.Log.Infof("Upstream resolvers: %v", config.DefaultConfig.DataPlane.UpstreamResolvers)
+	logger.Log.Infof("Query handled successfully for domain: %s", domain)
 }

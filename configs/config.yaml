@@ -1,8 +1,8 @@
 dataplane:
-  listen_addr: "0.0.0.0:1053"
+  listen_addr: "127.0.0.1:1053"
   upstream_resolvers:
     - "8.8.8.8:53"
     - "1.1.1.1:53"
 
 controlplane:
-  listen_addr: "0.0.0.0:8086"
+  listen_addr: "127.0.0.1:8086"

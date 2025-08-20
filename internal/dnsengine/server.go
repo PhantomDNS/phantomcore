@@ -11,6 +11,7 @@ import (
 )
 
 func makeServer() (*dns.Server, *dns.Server) {
+	logger.Log.Infof("Resolved listen address: %q", config.DefaultConfig.DataPlane.ListenAddr)
 	tcpSrv := &dns.Server{Addr: config.DefaultConfig.DataPlane.ListenAddr, Net: "tcp"}
 	udpSrv := &dns.Server{Addr: config.DefaultConfig.DataPlane.ListenAddr, Net: "udp"}
 	return tcpSrv, udpSrv
@@ -23,13 +24,13 @@ func RunServer() {
 	// Setting up the server here
 	tcpSrv, udpSrv := makeServer()
 	go func() {
-		logger.Log.Info("Starting TCP server on", tcpSrv.Addr)
+		logger.Log.Info("Starting TCP server on ", tcpSrv.Addr)
 		if err := tcpSrv.ListenAndServe(); err != nil {
 			logger.Log.Error("TCP server failed: " + err.Error())
 		}
 	}()
 	go func() {
-		logger.Log.Info("Starting UDP server on", udpSrv.Addr)
+		logger.Log.Info("Starting UDP server on ", udpSrv.Addr)
 		if err := udpSrv.ListenAndServe(); err != nil {
 			logger.Log.Error("UDP server failed: " + err.Error())
 		}
