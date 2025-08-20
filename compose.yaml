@@ -14,6 +14,7 @@ services:
       - phantom-net
     volumes:
       - ./data:/app/data
+      - ./configs:/app/configs/config.yaml
 
   controlplane:
     build:
@@ -27,6 +28,7 @@ services:
       - phantom-net
     volumes:
       - ./data:/app/data
+      - ./configs:/app/configs/config.yaml
 
 networks:
   phantom-net:
