@@ -1,12 +1,12 @@
 package dnsengine
 
 import (
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/lopster568/phantomDNS/internal/config"
+	"github.com/lopster568/phantomDNS/internal/logger"
 	"github.com/miekg/dns"
 )
 
@@ -27,15 +27,15 @@ func RunServer() {
 	// Setting up the server here
 	tcpSrv, udpSrv := makeServer()
 	go func() {
-		log.Println("Starting TCP server on", tcpSrv.Addr)
+		logger.Log.Info("Starting TCP server on", tcpSrv.Addr)
 		if err := tcpSrv.ListenAndServe(); err != nil {
-			log.Println("TCP server failed: " + err.Error())
+			logger.Log.Error("TCP server failed: " + err.Error())
 		}
 	}()
 	go func() {
-		log.Println("Starting UDP server on", udpSrv.Addr)
+		logger.Log.Info("Starting UDP server on", udpSrv.Addr)
 		if err := udpSrv.ListenAndServe(); err != nil {
-			log.Println("UDP server failed: " + err.Error())
+			logger.Log.Error("UDP server failed: " + err.Error())
 		}
 	}()
 
@@ -43,8 +43,8 @@ func RunServer() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	<-sig
-	log.Println("shutting down...")
+	logger.Log.Info("shutting down...")
 	udpSrv.Shutdown()
 	tcpSrv.Shutdown()
-	log.Println("exited")
+	logger.Log.Info("exited")
 }
