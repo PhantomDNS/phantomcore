@@ -16,14 +16,8 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	domain := r.Question[0].Name
 	logger.Log.Infof("Received request for domain: %s", domain)
 
-	cfg, err := config.Load("configs/config.yaml")
-	if err != nil {
-		logger.Log.Errorf("Failed to load config: %v", err)
-		return
-	}
-
 	client := new(dns.Client)
-	resp, _, err := client.Exchange(r, cfg.DataPlane.UpstreamResolvers[0])
+	resp, _, err := client.Exchange(r, config.DefaultConfig.DataPlane.UpstreamResolvers[0])
 	if err != nil {
 		logger.Log.Errorf("Failed to query upstream resolver: %v", err)
 
@@ -41,5 +35,5 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	logger.Log.Infof("Upstream resolvers: %v", cfg.DataPlane.UpstreamResolvers)
+	logger.Log.Infof("Upstream resolvers: %v", config.DefaultConfig.DataPlane.UpstreamResolvers)
 }

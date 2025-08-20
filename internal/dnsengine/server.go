@@ -11,12 +11,8 @@ import (
 )
 
 func makeServer() (*dns.Server, *dns.Server) {
-	cfg, err := config.Load("configs/config.yaml")
-	if err != nil {
-		panic("Failed to load config: " + err.Error())
-	}
-	tcpSrv := &dns.Server{Addr: cfg.DataPlane.ListenAddr, Net: "tcp"}
-	udpSrv := &dns.Server{Addr: cfg.DataPlane.ListenAddr, Net: "udp"}
+	tcpSrv := &dns.Server{Addr: config.DefaultConfig.DataPlane.ListenAddr, Net: "tcp"}
+	udpSrv := &dns.Server{Addr: config.DefaultConfig.DataPlane.ListenAddr, Net: "udp"}
 	return tcpSrv, udpSrv
 }
 
