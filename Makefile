@@ -1,7 +1,10 @@
-.PHONY: build test lint clean build-docker
+.PHONY: build test lint clean build-docker destroy-docker
 
 build-docker: 
 	docker-compose up -d --build
+
+destroy-docker: 
+	docker-compose down
 
 build:
 	go build -o bin/controlplane ./cmd/controlplane
