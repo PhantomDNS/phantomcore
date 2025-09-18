@@ -1,6 +1,8 @@
 package dnsengine
 
 import (
+	"time"
+
 	"github.com/lopster568/phantomDNS/internal/logger"
 
 	"github.com/miekg/dns"
@@ -16,7 +18,7 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	logger.Log.Infof("Received request for domain: %s", domain)
 
 	// Use the upstream pool instead of dns.Client
-	resp, err := upstreamPool.Exchange(r, defaultQueryTimeout)
+	resp, err := upstreamManager.Exchange(r, 2*time.Second, 3) // 3 retries per resolver
 
 	if err != nil {
 		logger.Log.Errorf("Upstream resolution failed for %s: %v", domain, err)

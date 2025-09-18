@@ -10,7 +10,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-var upstreamPool *UpstreamPool
+var upstreamManager *UpstreamManager
 
 func makeServer() (*dns.Server, *dns.Server) {
 	logger.Log.Infof("Resolved listen address: %q", config.DefaultConfig.DataPlane.ListenAddr)
@@ -20,14 +20,12 @@ func makeServer() (*dns.Server, *dns.Server) {
 }
 
 func RunServer() {
-	// Build the upstream pool
-	addr := config.DefaultConfig.DataPlane.UpstreamResolvers[0]
-	pool, err := NewUpstreamPool(addr, 4) // pool size of 4
+	mgr, err := NewUpstreamManager(config.DefaultConfig.DataPlane.UpstreamResolvers, 4)
 	if err != nil {
-		logger.Log.Fatalf("failed to init upstream pool: %v", err)
+		logger.Log.Fatal("Failed to create UpstreamManager: " + err.Error())
 	}
-	upstreamPool = pool
-	defer upstreamPool.Close()
+	upstreamManager = mgr
+	defer mgr.Close()
 
 	// Assign our custom handler to process DNS requests
 	dns.HandleFunc(".", handleDnsRequest)
