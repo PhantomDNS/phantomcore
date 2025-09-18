@@ -16,19 +16,19 @@ services:
       - ./data:/app/data
       - ./configs/config.yaml:/app/configs/config.yaml
 
-  controlplane:
-    build:
-      context: .
-      dockerfile: docker/controlplane.Dockerfile
-    container_name: phantom-controlplane
-    restart: unless-stopped
-    ports:
-      - "8087:8086"
-    networks:
-      - phantom-net
-    volumes:
-      - ./data:/app/data
-      - ./configs/config.yaml:/app/configs/config.yaml
+  # controlplane:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/controlplane.Dockerfile
+  #   container_name: phantom-controlplane
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8087:8086"
+  #   networks:
+  #     - phantom-net
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ./configs/config.yaml:/app/configs/config.yaml
 
 networks:
   phantom-net:
