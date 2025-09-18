@@ -1,7 +1,6 @@
 package dnsengine
 
 import (
-	"github.com/lopster568/phantomDNS/internal/config"
 	"github.com/lopster568/phantomDNS/internal/logger"
 
 	"github.com/miekg/dns"
@@ -16,20 +15,18 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	domain := r.Question[0].Name
 	logger.Log.Infof("Received request for domain: %s", domain)
 
-	// Query the upstream resolver and log the response
-	client := new(dns.Client)
-	resp, _, err := client.Exchange(r, config.DefaultConfig.DataPlane.UpstreamResolvers[0])
+	// Use the upstream pool instead of dns.Client
+	resp, err := upstreamPool.Exchange(r, defaultQueryTimeout)
 
 	if err != nil {
-		logger.Log.Infof("Forwarding %s to upstream %s", domain, config.DefaultConfig.DataPlane.UpstreamResolvers[0])
+		logger.Log.Errorf("Upstream resolution failed for %s: %v", domain, err)
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeServerFailure)
 		if err := w.WriteMsg(m); err != nil {
-			logger.Log.Errorf("Failed to write response: %v", err)
+			logger.Log.Errorf("Failed to write failure response: %v", err)
 		}
 		return
 	}
-
 	if err := w.WriteMsg(resp); err != nil {
 		logger.Log.Errorf("Failed to write response: %v", err)
 		return
