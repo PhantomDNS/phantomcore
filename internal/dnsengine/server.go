@@ -7,31 +7,38 @@ import (
 
 	"github.com/lopster568/phantomDNS/internal/config"
 	"github.com/lopster568/phantomDNS/internal/logger"
+	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 	"github.com/miekg/dns"
 )
 
-var upstreamManager *UpstreamManager
-
-func makeServer() (*dns.Server, *dns.Server) {
-	logger.Log.Infof("Resolved listen address: %q", config.DefaultConfig.DataPlane.ListenAddr)
-	tcpSrv := &dns.Server{Addr: config.DefaultConfig.DataPlane.ListenAddr, Net: "tcp"}
-	udpSrv := &dns.Server{Addr: config.DefaultConfig.DataPlane.ListenAddr, Net: "udp"}
-	return tcpSrv, udpSrv
+type Server struct {
+	upstreamManager *UpstreamManager
+	repos           *repositories.Store
+	cfg             config.DataPlaneConfig
 }
 
-func RunServer() {
-	mgr, err := NewUpstreamManager(config.DefaultConfig.DataPlane.UpstreamResolvers, 4)
+func NewServer(cfg config.DataPlaneConfig, repos *repositories.Store) (*Server, error) {
+	mgr, err := NewUpstreamManager(cfg.UpstreamResolvers, 4)
 	if err != nil {
-		logger.Log.Fatal("Failed to create UpstreamManager: " + err.Error())
+		return nil, err
 	}
-	upstreamManager = mgr
-	defer mgr.Close()
+	return &Server{
+		upstreamManager: mgr,
+		repos:           repos,
+		cfg:             cfg,
+	}, nil
+}
 
-	// Assign our custom handler to process DNS requests
+func (s *Server) Run() {
+	defer s.upstreamManager.Close()
+
+	// bind handler for DNS request
 	dns.HandleFunc(".", handleDnsRequest)
 
-	// Setting up the server here
-	tcpSrv, udpSrv := makeServer()
+	tcpSrv := &dns.Server{Addr: s.cfg.ListenAddr, Net: "tcp"}
+	udpSrv := &dns.Server{Addr: s.cfg.ListenAddr, Net: "udp"}
+
+	// Start servers
 	go func() {
 		logger.Log.Info("Starting TCP server on ", tcpSrv.Addr)
 		if err := tcpSrv.ListenAndServe(); err != nil {
