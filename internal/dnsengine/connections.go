@@ -14,6 +14,7 @@ const (
 	defaultDialTimeout  = 5 * time.Second
 	defaultQueryTimeout = 5 * time.Second
 	defaultKeepAlive    = 30 * time.Second
+	maxRetries          = 3
 )
 
 // UDPClient is a small wrapper around a reusable UDP socket for a single upstream.

@@ -37,7 +37,7 @@ import (
 // 	logger.Log.Infof("Query handled successfully for domain: %s", domain)
 // }
 
-func (e *DNSEngine) HandleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
+func (e *Engine) HandleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	if r == nil || len(r.Question) == 0 {
 		logger.Log.Warn("Received empty DNS request")
 		return
