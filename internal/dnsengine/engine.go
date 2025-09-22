@@ -58,15 +58,19 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	// Store the query in the log (CE = anonymized client IP)
-	go func() {
-		dnslog := &models.DNSQuery{
-			ID:       uint(resp.Id),
-			Domain:   domainName,
-			ClientIP: utils.AnonymizeIP(w.RemoteAddr().String()), // Consider anonymizing this if needed
-			Action:   "allow",                                    // For now, we only allow queries
-		}
-		if err := e.repos.QueryLogs.Save(dnslog); err != nil {
-			logger.Log.Error("Failed to log DNS query: " + err.Error())
-		}
-	}()
+	if e.repos != nil && e.repos.QueryLogs != nil {
+		go func() {
+			dnslog := &models.DNSQuery{
+				ID:       uint(resp.Id),
+				Domain:   domainName,
+				ClientIP: utils.AnonymizeIP(w.RemoteAddr().String()), // Consider anonymizing this if needed
+				Action:   "allow",                                    // For now, we only allow queries
+			}
+			if err := e.repos.QueryLogs.Save(dnslog); err != nil {
+				logger.Log.Error("Failed to log DNS query: " + err.Error())
+			}
+		}()
+	} else {
+		logger.Log.Warn("Query logging is disabled: repos or QueryLogs is nil")
+	}
 }

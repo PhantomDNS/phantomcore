@@ -13,7 +13,7 @@ func main() {
 	// 1. Initialize DB
 	db.InitDB("/app/data/phantomdns.db")
 	// 2. Initialize Repositories (store)
-	repos := &repositories.Store{}
+	repos := repositories.NewStore(db.DB)
 	// 3. Initialize DNS Engine with default config and repos
 	engine, err := dnsengine.NewDNSEngine(config.DefaultConfig.DataPlane, repos)
 	if err != nil {

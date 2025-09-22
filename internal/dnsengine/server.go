@@ -27,7 +27,7 @@ func (s *Server) Run() {
 	defer s.engine.upstreamManager.Close()
 
 	// bind handler for DNS request
-	dns.HandleFunc(".", s.engine.HandleDnsRequest)
+	dns.HandleFunc(".", s.engine.ProcessDNSQuery)
 
 	tcpSrv := &dns.Server{Addr: s.cfg.ListenAddr, Net: "tcp"}
 	udpSrv := &dns.Server{Addr: s.cfg.ListenAddr, Net: "udp"}
