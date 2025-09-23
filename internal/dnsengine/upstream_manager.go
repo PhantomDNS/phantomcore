@@ -1,4 +1,5 @@
 // Handles upstream DNS resolvers with connection pooling, retry, and failover.
+// SPDX-License-Identifier: GPL-3.0-or-later
 package dnsengine
 
 import (

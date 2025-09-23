@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 module github.com/lopster568/phantomDNS
 
 go 1.23.0

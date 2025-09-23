@@ -1,4 +1,5 @@
 // Just a glue which binds everything together and runs the DNS server on the Network
+// SPDX-License-Identifier: GPL-3.0-or-later
 package dnsengine
 
 import (

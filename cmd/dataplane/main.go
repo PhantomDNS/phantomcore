@@ -1,5 +1,6 @@
 package main
 
+// SPDX-License-Identifier: GPL-3.0-or-later
 import (
 	"github.com/lopster568/phantomDNS/internal/config"
 	"github.com/lopster568/phantomDNS/internal/dnsengine"

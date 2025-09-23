@@ -1,5 +1,14 @@
 package dnsengine
 
+// SPDX-License-Identifier: GPL-3.0-or-later
+// import (
+// 	"time"
+
+// 	"github.com/lopster568/phantomDNS/internal/logger"
+
+// 	"github.com/miekg/dns"
+// )
+
 // func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 // 	if r == nil || len(r.Question) == 0 {
 // 		logger.Log.Warn("Received empty DNS request")
