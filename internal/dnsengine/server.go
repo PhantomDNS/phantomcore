@@ -1,3 +1,4 @@
+// Just a glue which binds everything together and runs the DNS server on the Network
 package dnsengine
 
 import (
@@ -7,33 +8,26 @@ import (
 
 	"github.com/lopster568/phantomDNS/internal/config"
 	"github.com/lopster568/phantomDNS/internal/logger"
-	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 	"github.com/miekg/dns"
 )
 
 type Server struct {
-	upstreamManager *UpstreamManager
-	repos           *repositories.Store
-	cfg             config.DataPlaneConfig
+	cfg    config.DataPlaneConfig
+	engine *Engine
 }
 
-func NewServer(cfg config.DataPlaneConfig, repos *repositories.Store) (*Server, error) {
-	mgr, err := NewUpstreamManager(cfg.UpstreamResolvers, 4)
-	if err != nil {
-		return nil, err
-	}
+func NewServer(cfg config.DataPlaneConfig, engine *Engine) (*Server, error) {
 	return &Server{
-		upstreamManager: mgr,
-		repos:           repos,
-		cfg:             cfg,
+		cfg:    cfg,
+		engine: engine,
 	}, nil
 }
 
 func (s *Server) Run() {
-	defer s.upstreamManager.Close()
+	defer s.engine.upstreamManager.Close()
 
 	// bind handler for DNS request
-	dns.HandleFunc(".", handleDnsRequest)
+	dns.HandleFunc(".", s.engine.ProcessDNSQuery)
 
 	tcpSrv := &dns.Server{Addr: s.cfg.ListenAddr, Net: "tcp"}
 	udpSrv := &dns.Server{Addr: s.cfg.ListenAddr, Net: "udp"}

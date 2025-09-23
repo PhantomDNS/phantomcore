@@ -3,6 +3,8 @@ dataplane:
   upstream_resolvers:
     - "8.8.8.8:53"
     - "1.1.1.1:53"
+  anonymization:
+    secret: "kF2yZtVQ4nS7C3uYv1zH9pXqW8aR5mLdGjKb0E6T2oUfPiNh"
 
 controlplane:
   listen_addr: "0.0.0.0:8086"

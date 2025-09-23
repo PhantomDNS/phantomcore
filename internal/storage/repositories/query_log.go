@@ -3,6 +3,7 @@ package repositories
 import (
 	"time"
 
+	"github.com/lopster568/phantomDNS/internal/logger"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"gorm.io/gorm"
 )
@@ -24,6 +25,8 @@ func NewGormQueryLogRepo(db *gorm.DB) *GormQueryLogRepo {
 
 func (r *GormQueryLogRepo) Save(query *models.DNSQuery) error {
 	query.Timestamp = time.Now()
+	logger.Log.Debug("Saving DNS query log")
+	logger.Log.Debug("query", query)
 	return r.db.Create(query).Error
 }
 

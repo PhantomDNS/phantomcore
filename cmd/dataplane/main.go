@@ -10,9 +10,17 @@ import (
 
 func main() {
 	logger.Log.Info("Starting PhantomDNS Data Plane...")
+	// 1. Initialize DB
 	db.InitDB("/app/data/phantomdns.db")
-	repos := &repositories.Store{}
-	srv, err := dnsengine.NewEngine(config.DefaultConfig.DataPlane, repos)
+	// 2. Initialize Repositories (store)
+	repos := repositories.NewStore(db.DB)
+	// 3. Initialize DNS Engine with default config and repos
+	engine, err := dnsengine.NewDNSEngine(config.DefaultConfig.DataPlane, repos)
+	if err != nil {
+		logger.Log.Fatal("Failed to create DNS engine: " + err.Error())
+	}
+	// 4. Initialize and Run Server with the engine
+	srv, err := dnsengine.NewServer(config.DefaultConfig.DataPlane, engine)
 	if err != nil {
 		logger.Log.Fatal("Failed to create server: " + err.Error())
 	}
