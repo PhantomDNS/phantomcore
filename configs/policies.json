@@ -26,6 +26,18 @@
             "regexes": [
                 ".*\\.evil\\.(com|net)$"
             ]
+        },
+        {
+            "id": "block-google",
+            "name": "Block Google",
+            "category": "advertising",
+            "action": "BLOCK",
+            "priority": 100,
+            "source": "local",
+            "domains": [
+                "google.com"
+            ],
+            "regexes": []
         }
     ]
 }
