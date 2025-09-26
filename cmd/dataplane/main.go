@@ -23,7 +23,7 @@ func main() {
 	}
 	// 4. Initialize Policy Engine
 	policyEngine := policy.NewPolicyEngine()
-	policies, err := policy.LoadPoliciesFromFile("/app/config/policies.json")
+	policies, err := policy.LoadPoliciesFromFile("/app/configs/policies.json")
 	if err != nil {
 		logger.Log.Fatalf("failed to load policies from file: %v", err)
 	}
