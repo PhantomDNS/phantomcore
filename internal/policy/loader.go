@@ -12,7 +12,7 @@ type policyFile struct {
 	Policies []Policy `json:"policies"`
 }
 
-func LoadPolicyFromFile(path string) ([]Policy, error) {
+func LoadPoliciesFromFile(path string) ([]Policy, error) {
 	if path == "" {
 		return nil, fmt.Errorf("No file path provided")
 	}
