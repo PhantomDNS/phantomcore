@@ -16,6 +16,9 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
+	github.com/spaolacci/murmur3 v1.1.0 // indirect
+	github.com/willf/bitset v1.1.11 // indirect
+	github.com/willf/bloom v2.0.3+incompatible // indirect
 	golang.org/x/mod v0.24.0 // indirect
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect

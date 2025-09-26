@@ -1,0 +1,43 @@
+{
+    "policies": [
+        {
+            "id": "block-ads",
+            "name": "Block Ads",
+            "category": "advertising",
+            "action": "BLOCK",
+            "priority": 100,
+            "source": "local",
+            "domains": [
+                "doubleclick.net",
+                "ads.example.com"
+            ],
+            "regexes": []
+        },
+        {
+            "id": "block-malware",
+            "name": "Block Malware",
+            "category": "security",
+            "action": "BLOCK",
+            "priority": 200,
+            "source": "external-feed",
+            "domains": [
+                "badexample.com"
+            ],
+            "regexes": [
+                ".*\\.evil\\.(com|net)$"
+            ]
+        },
+        {
+            "id": "block-google",
+            "name": "Block Google",
+            "category": "advertising",
+            "action": "BLOCK",
+            "priority": 100,
+            "source": "local",
+            "domains": [
+                "google.com"
+            ],
+            "regexes": []
+        }
+    ]
+}
