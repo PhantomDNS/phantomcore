@@ -1,6 +1,24 @@
 # 🤝 Contributing Guidelines
 
-Thank you for your interest in contributing! 🚀 This project thrives because of contributors like you who bring improvements in code, documentation, testing, and design.
+[![Hacktoberfest 2025](https://img.shields.io/badge/Hacktoberfest-2025-orange.svg)](https://hacktoberfest.com)
+
+Welcome to PhantomDNS! 🚀 We're excited to have you here. This project thrives because of contributors like you who help improve our code, documentation, testing, and design.
+
+## 🎃 Hacktoberfest 2025
+
+We're participating in Hacktoberfest 2025! Here's how you can help:
+
+### Beginner-Friendly Tasks
+- 📖 Improve documentation and setup guides
+- 🎨 Add diagrams to explain concepts
+- ✅ Write test cases
+- 🐛 Fix small bugs
+
+### For Experienced Contributors
+- 🏗️ Implement new features
+- 🚀 Optimize performance
+- 🔧 Enhance configuration options
+- 📊 Add monitoring capabilities
 
 ---
 
