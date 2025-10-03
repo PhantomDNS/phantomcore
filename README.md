@@ -1,6 +1,6 @@
 # PhantomDNS 🛡️
 
-[![Hac### Prerequisites
+Hactober Prerequisites
 
 - Docker & Docker Compose
 - Go 1.20 or higher (for development)
@@ -9,51 +9,41 @@
 ### Installation
 
 1. **Clone the repository:**
-    ```sh
-    git clone https://github.com/lopster568/PhantomDNS.git
-    cd PhantomDNS
-    ```
+
+   ```sh
+   git clone https://github.com/lopster568/PhantomDNS.git
+   cd PhantomDNS
+   ```
 
 2. **Configure the environment** (optional):
-    ```sh
-    # Copy the example config
-    cp configs/config.yaml.example configs/config.yaml
-    
-    # Edit the configuration file as needed
-    vim configs/config.yaml
-    ```
+
+   ```sh
+   # Copy the example config
+   cp configs/config.yaml.example configs/config.yaml
+
+   # Edit the configuration file as needed
+   vim configs/config.yaml
+   ```
 
 3. **Build and run using Docker Compose:**
-    ```sh
-    docker-compose up --build
-    ```
+   ```sh
+   docker-compose up --build
+   ```
 
 ## 🔧 Usage
 
 Once running, PhantomDNS provides two main services:
 
 ### Data Plane (DNS Server)
+
 - **Port**: 1053 (UDP and TCP)
 - **Purpose**: Handles DNS queries with security filtering
 - **Test it**: `dig @localhost -p 1053 example.com`
 
 ### Control Plane (Admin API)
+
 - **Port**: 8086
 - **Purpose**: Configuration and monitoring interface
-- **API Docs**: Visit `http://localhost:8086/docs` for Swagger documentation
-
-### Basic Commands
-
-```sh
-# Check DNS server status
-curl http://localhost:8086/api/v1/status
-
-# View current blocking rules
-curl http://localhost:8086/api/v1/rules
-
-# Add a domain to blocklist
-curl -X POST http://localhost:8086/api/v1/rules -d '{"domain": "example.com"}'
-```
 
 [![Hacktoberfest 2025](https://img.shields.io/badge/Hacktoberfest-2025-orange.svg)](https://hacktoberfest.com)
 [![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](./LICENSE)
@@ -146,10 +136,8 @@ Look for issues tagged with `good-first-issue` - these are perfect for newcomers
 
 ### Getting Help
 
-- 📖 Read our [documentation](./docs)
-- 💬 Join our [Discord community](https://discord.gg/phantomdns)
-- 🐛 Report bugs via [GitHub Issues](https://github.com/lopster568/PhantomDNS/issues)
-- 💡 Suggest features in our [Discussions](https://github.com/lopster568/PhantomDNS/discussions)
+- 📖 Drop a mail @ rosh.s568@gmail.com
+- 💬 Connect on [LinkedIn](https://www.linkedin.com/in/roshan-singh568)
 
 ## 📝 License
 
