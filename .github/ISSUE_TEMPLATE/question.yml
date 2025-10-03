@@ -1,0 +1,81 @@
+name: ❓ Question
+description: Ask a question about PhantomCore
+title: "[Question]: "
+labels: ["question", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question about PhantomCore? 🤔
+        
+        We're here to help! Please provide as much context as possible.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Question Category
+      description: What's your question about?
+      options:
+        - Installation/Setup
+        - Configuration
+        - Usage/Features
+        - Troubleshooting
+        - Development/Contributing
+        - Performance
+        - Security
+        - Integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: What would you like to know?
+      placeholder: |
+        How do I...?
+        Why does...?
+        What's the best way to...?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide context for your question
+      placeholder: |
+        I'm trying to...
+        My setup is...
+        I expected... but got...
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What You've Tried
+      description: What have you already tried or researched?
+      placeholder: |
+        I've looked at...
+        I tried...
+        I found... but it didn't help because...
+
+  - type: input
+    id: version
+    attributes:
+      label: PhantomCore Version
+      description: What version are you using? (if relevant)
+      placeholder: "e.g., v1.0.0"
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Details
+      description: Your setup details (if relevant)
+      placeholder: |
+        OS: Ubuntu 22.04
+        Deployment: Docker Compose
+        Network: Behind corporate firewall
+        etc.
