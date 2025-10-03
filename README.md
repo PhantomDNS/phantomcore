@@ -53,7 +53,9 @@ curl http://localhost:8086/api/v1/rules
 
 # Add a domain to blocklist
 curl -X POST http://localhost:8086/api/v1/rules -d '{"domain": "example.com"}'
-```ps://img.shields.io/badge/Hacktoberfest-2025-orange.svg)](https://hacktoberfest.com)
+```
+
+[![Hacktoberfest 2025](https://img.shields.io/badge/Hacktoberfest-2025-orange.svg)](https://hacktoberfest.com)
 [![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](./LICENSE)
 [![Contributors Welcome](https://img.shields.io/badge/contributors-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
