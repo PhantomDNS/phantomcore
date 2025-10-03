@@ -1,4 +1,4 @@
-name: CI
+name: 🔍 CI Pipeline
 
 on:
   push:
@@ -6,19 +6,179 @@ on:
   pull_request:
     branches: [ "main" ]
 
+env:
+  GO_VERSION: '1.21'
+
 jobs:
-  build:
+  # Code Quality Checks
+  lint:
+    name: 🔧 Code Linting
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
 
-    - name: Set up Go
+    - name: 🔧 Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.23'
+        go-version: ${{ env.GO_VERSION }}
 
-    - name: Build
-      run: go build -v ./...
+    - name: 📦 Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
 
-    - name: Test
-      run: go test -v ./...
+    - name: 📋 Run golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=5m
+
+  # Security Scanning
+  security:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: 🔒 Run Gosec Security Scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: ./...
+
+  # Build and Test
+  test:
+    name: 🧪 Build & Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.21', '1.22']
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: 📦 Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+    - name: 📦 Download dependencies
+      run: go mod download
+
+    - name: 🔍 Verify dependencies
+      run: go mod verify
+
+    - name: 🏗️ Build binaries
+      run: |
+        go build -v -o bin/controlplane ./cmd/controlplane
+        go build -v -o bin/dataplane ./cmd/dataplane
+
+    - name: 🧪 Run tests
+      run: go test -v -race -coverprofile=coverage.out ./...
+
+    - name: 📊 Upload coverage to Codecov
+      if: matrix.go-version == '1.21'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: 🔍 Run go vet
+      run: go vet ./...
+
+  # Docker Build Test
+  docker:
+    name: 🐳 Docker Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🐳 Build Control Plane Image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/controlplane.Dockerfile
+        push: false
+        tags: phantomcore/controlplane:test
+
+    - name: 🐳 Build Data Plane Image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/dataplane.Dockerfile
+        push: false
+        tags: phantomcore/dataplane:test
+
+    - name: 🧪 Test Docker Compose
+      run: |
+        docker-compose -f compose.yaml config
+        echo "✅ Docker Compose configuration is valid"
+
+  # Integration Tests
+  integration:
+    name: 🔄 Integration Tests
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: 🐳 Start test environment
+      run: |
+        docker-compose up -d
+        sleep 10  # Wait for services to start
+
+    - name: 🧪 Run integration tests
+      run: |
+        # Add integration test commands here
+        echo "🧪 Integration tests would run here"
+        # Example: go test -tags=integration ./tests/integration/...
+
+    - name: 🛑 Stop test environment
+      if: always()
+      run: docker-compose down
+
+  # Dependency Check
+  deps:
+    name: 📦 Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔧 Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: 📦 Check for vulnerabilities
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
