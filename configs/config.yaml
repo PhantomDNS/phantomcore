@@ -82,3 +82,11 @@ controlplane:
   #   # Or auto-generate a self-signed cert on first boot:
   #   auto_self_signed: false                 # env: TLS_AUTO_SELF_SIGNED
   #   self_signed_dir: "/app/data/tls"        # env: TLS_SELF_SIGNED_DIR
+
+# Managed-service licensing (SOFT gate — premium/managed features + support only).
+# Core DNS resolution/filtering ALWAYS works regardless of license state; a
+# missing or expired license simply runs the install in "community" mode.
+# Provide a signed license token via one of these environment variables:
+#   LICENSE_KEY  - the raw signed license token (takes precedence)
+#   LICENSE_FILE - path to a file containing the token
+# See internal/license for the token format and validation details.
