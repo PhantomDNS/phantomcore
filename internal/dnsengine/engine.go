@@ -50,6 +50,12 @@ type Engine struct {
 	// cache holds recent allowed answers for serve-stale; nil when disabled.
 	cache *answerCache
 
+	// Newly-observed-domain (NOD) detection. nodLedger is nil when NOD is
+	// disabled (window <= 0). When set, nodBlock decides whether a newly
+	// observed domain is blocked (true) or merely flagged and forwarded (false).
+	nodLedger *nodLedger
+	nodBlock  bool
+
 	// threatBlockThreshold, when > 0, turns the heuristic threat detector from
 	// log-only into enforcement: a suspicious query with ThreatScore >= threshold
 	// is blocked. threatBlockDryRun logs a would-be block instead of blocking.
@@ -118,6 +124,13 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		}
 	}
 
+	// Newly-observed-domain ledger: only enabled when a positive window is set.
+	var ledger *nodLedger
+	if cfg.NODWindowHours > 0 {
+		ledger = newNODLedger(time.Duration(cfg.NODWindowHours)*time.Hour, nodDefaultMaxEntries, nil)
+		logger.Log.Infof("NOD detection enabled: window=%dh block=%v", cfg.NODWindowHours, cfg.NODBlock)
+	}
+
 	e := &Engine{
 		upstreamManager:      mgr,
 		policyEngine:         pE,
@@ -132,6 +145,8 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		rebindProtection:     cfg.RebindProtection,
 		rateLimiter:          newRateLimiter(cfg.ClientRateLimitPerSec),
 		safeSearch:           cfg.SafeSearch,
+		nodLedger:            ledger,
+		nodBlock:             cfg.NODBlock,
 	}
 	if cfg.ServeStale {
 		e.serveStale = true
@@ -502,6 +517,28 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 				e.respondSafeSearch(w, r, target)
 				success = true
 				return
+			}
+		}
+
+		// Newly-observed-domain (NOD) detection runs only on the allow path, so
+		// it never overrides an explicit block/redirect decided above. observe()
+		// records the domain on first sight and reports whether it is new.
+		nodNew := e.nodLedger != nil && e.nodLedger.observe(domainName)
+		if nodNew && e.nodBlock {
+			logger.Log.Infof("Blocking newly-observed domain: %s", domainName)
+			e.logQuery(domainName, clientIP, "block", "nod", threatResult)
+			e.respondBlocked(w, r, domainName, "nod")
+			success = true
+			return
+		}
+		if nodNew {
+			// Flag-only mode: annotate as suspicious and forward normally.
+			threatResult.IsSuspicious = true
+			if threatResult.DetectionMethod == "" {
+				threatResult.DetectionMethod = "nod"
+			}
+			if threatResult.Reason == "" {
+				threatResult.Reason = "newly observed domain (first seen within NOD window)"
 			}
 		}
 

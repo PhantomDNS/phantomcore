@@ -80,6 +80,14 @@ type DataPlaneConfig struct {
 	// ServeStale, when true, answers from an expired cache entry if the upstream
 	// fails, so a transient upstream/ISP blip does not take DNS down. Default off.
 	ServeStale bool `yaml:"serve_stale"`
+
+	// Newly-observed-domain (NOD) detection. NODWindowHours is the first-seen
+	// window in hours; 0 (the default) disables NOD entirely. When enabled, a
+	// domain first seen on this resolver within the window is treated as newly
+	// observed. NODBlock decides the action: false (default) flags and forwards,
+	// true blocks the query. See internal/dnsengine/nod.go for the ledger.
+	NODWindowHours int  `yaml:"nod_window_hours"`
+	NODBlock       bool `yaml:"nod_block"`
 }
 
 // WatchdogIntervalDuration parses WatchdogInterval into a duration. It returns 0
@@ -283,6 +291,20 @@ var DefaultConfig = func() *Config {
 	}
 	if v := os.Getenv("SERVE_STALE"); v == "true" || v == "1" {
 		cfg.DataPlane.ServeStale = true
+	}
+	if v := os.Getenv("NOD_WINDOW_HOURS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.DataPlane.NODWindowHours = n
+		} else {
+			logger.Log.Warnf("Invalid NOD_WINDOW_HOURS=%q, ignoring: %v", v, err)
+		}
+	}
+	if v := os.Getenv("NOD_BLOCK"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.DataPlane.NODBlock = b
+		} else {
+			logger.Log.Warnf("Invalid NOD_BLOCK=%q, ignoring: %v", v, err)
+		}
 	}
 	return cfg
 }()
