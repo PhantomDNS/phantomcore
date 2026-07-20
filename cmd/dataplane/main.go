@@ -14,6 +14,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/config"
 	"github.com/lopster568/phantomDNS/internal/diskhealth"
 	"github.com/lopster568/phantomDNS/internal/dnsengine"
+	"github.com/lopster568/phantomDNS/internal/geoip"
 	dataplanegrpc "github.com/lopster568/phantomDNS/internal/grpc/dataplane"
 	"github.com/lopster568/phantomDNS/internal/heartbeat"
 	"github.com/lopster568/phantomDNS/internal/logger"
@@ -121,6 +122,20 @@ func main() {
 	engine, err := dnsengine.NewDNSEngine(config.DefaultConfig.DataPlane, repos, policyEngine)
 	if err != nil {
 		logger.Log.Fatal("Failed to create DNS engine: " + err.Error())
+	}
+
+	// 5b. Optional ASN/GeoIP answer filtering — inert unless GEOIP_DB_PATH is set.
+	geoCfg := config.DefaultConfig.DataPlane.GeoIP
+	geoFilter, err := geoip.FromConfig(geoCfg.DBPath, geoCfg.BlockedASNs, geoCfg.BlockedCountries, geoCfg.Block)
+	if err != nil {
+		logger.Log.Warnf("GeoIP filtering disabled: %v", err)
+	} else if geoFilter != nil {
+		engine.AttachGeoFilter(geoFilter)
+		mode := "flag"
+		if geoFilter.BlockMode() {
+			mode = "block"
+		}
+		logger.Log.Infof("ASN/GeoIP answer filtering enabled (mode=%s)", mode)
 	}
 
 	// 6. gRPC server

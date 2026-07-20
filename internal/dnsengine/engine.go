@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lopster568/phantomDNS/internal/config"
+	"github.com/lopster568/phantomDNS/internal/geoip"
 	"github.com/lopster568/phantomDNS/internal/logger"
 	"github.com/lopster568/phantomDNS/internal/metrics"
 	"github.com/lopster568/phantomDNS/internal/policy"
@@ -45,6 +46,10 @@ type Engine struct {
 	statistics      repositories.StatisticsRepository
 	threatDetector  *threat.Detector
 	exporter        *Exporter
+	// geo is nil when ASN/GeoIP answer filtering is disabled (the default, no
+	// database configured). When set, resolved answer IPs on the allow path are
+	// evaluated against it.
+	geo *geoip.Filter
 
 	// fastFlux is nil when fast-flux detection is disabled (the default). When
 	// set, upstream answers on the allow path are fed to it and tripping domains
@@ -105,6 +110,12 @@ var safeSearchTargets = map[string]string{
 
 func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
 	e.blocklist = b
+}
+
+// AttachGeoFilter enables optional ASN/GeoIP answer filtering. A nil filter
+// (the default) leaves the engine's allow path unchanged and adds no overhead.
+func (e *Engine) AttachGeoFilter(f *geoip.Filter) {
+	e.geo = f
 }
 
 func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *policy.Engine) (*Engine, error) {
@@ -298,11 +309,21 @@ func (e *Engine) respondSafeSearch(w dns.ResponseWriter, r *dns.Msg, target stri
 	}
 }
 
+// forwardOutcome reports what happened while forwarding a query upstream, for
+// the caller to fold into its logging/action decision. Fast-flux is always
+// advisory (flag-only); GeoIP is flag-only unless GEOIP_BLOCK is configured.
+type forwardOutcome struct {
+	fastFlux   bool
+	geoMatched bool
+	geoBlocked bool
+	geoReason  string
+}
+
 // forwardUpstream forwards the query to upstream and writes the response back
-// (subject to rebind-protection filtering). It returns true when fast-flux
-// detection is enabled and the answer trips the heuristic (advisory only — the
-// response is never altered or blocked for fast-flux).
-func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) bool {
+// (subject to rebind-protection filtering and, when configured, the GeoIP
+// filter's block decision). The returned forwardOutcome tells the caller
+// whether fast-flux and/or GeoIP detectors fired.
+func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) forwardOutcome {
 	resp, err := e.upstreamManager.Exchange(r, 5, 2)
 	if err != nil || resp == nil {
 		if err != nil {
@@ -319,13 +340,13 @@ func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string
 				if werr := w.WriteMsg(ent.reply(r, staleTTL)); werr != nil {
 					logger.Log.Error("Failed to write stale DNS response: " + werr.Error())
 				}
-				return false
+				return forwardOutcome{}
 			}
 		}
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeServerFailure)
 		_ = w.WriteMsg(m)
-		return false
+		return forwardOutcome{}
 	}
 	// Cache successful answers so they can back a future serve-stale response.
 	if e.serveStale && e.cache != nil && resp.Rcode == dns.RcodeSuccess {
@@ -334,10 +355,10 @@ func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string
 
 	// Fast-flux detection (flag-only, never blocks). Inspect the answer's A/AAAA
 	// records before writing the response back.
-	fastFlux := false
+	outcome := forwardOutcome{}
 	if e.fastFlux != nil {
 		if ips, ttl, ok := extractAnswerIPs(resp); ok && e.fastFlux.observe(domain, ips, ttl) {
-			fastFlux = true
+			outcome.fastFlux = true
 			logger.Log.Warnf("Fast-flux suspected: %s (distinct-IP churn with low TTL within window)", domain)
 		}
 	}
@@ -353,15 +374,31 @@ func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string
 			qtype := r.Question[0].Qtype
 			if len(kept) == 0 && (qtype == dns.TypeA || qtype == dns.TypeAAAA) {
 				e.respondBlocked(w, r, domain, "rebind")
-				return fastFlux
+				return outcome
 			}
+		}
+	}
+
+	// Optional ASN/GeoIP answer filtering. Disabled (e.geo nil) unless a
+	// database is configured, keeping the original zero-overhead fast path.
+	if e.geo != nil {
+		if d := e.geo.Evaluate(answerIPs(resp)); d.Matched {
+			outcome.geoMatched = true
+			outcome.geoReason = d.Reason
+			if d.Block {
+				outcome.geoBlocked = true
+				logger.Log.Infof("Blocking via GeoIP filter: %s (%s)", domain, d.Reason)
+				e.respondBlocked(w, r, domain, "geoip")
+				return outcome
+			}
+			logger.Log.Warnf("GeoIP flagged answer for %s: %s", domain, d.Reason)
 		}
 	}
 
 	if err := w.WriteMsg(resp); err != nil {
 		logger.Log.Error("Failed to write DNS response: " + err.Error())
 	}
-	return fastFlux
+	return outcome
 }
 
 // normalizeDomain lowercases and strips the trailing dot from a DNS FQDN.
@@ -604,9 +641,11 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 			reason = threatResult.DetectionMethod
 			logger.Log.Warnf("Suspicious domain allowed: %s (score=%.2f, method=%s)", domainName, threatResult.ThreatScore, threatResult.DetectionMethod)
 		}
-		// Forward first so the fast-flux heuristic can inspect the answer, then
-		// log — a tripped domain is flagged (never blocked).
-		if e.forwardUpstream(w, r, domainName) {
+		// Forward first so the fast-flux heuristic and the optional GeoIP filter
+		// can inspect the answer, then log — a tripped domain is flagged/blocked
+		// based on which detector fired.
+		outcome := e.forwardUpstream(w, r, domainName)
+		if outcome.fastFlux {
 			action = "flagged"
 			if !threatResult.IsSuspicious {
 				threatResult.IsSuspicious = true
@@ -615,9 +654,51 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 			}
 			reason = threatResult.DetectionMethod
 		}
+		if outcome.geoMatched {
+			threatResult = enrichThreat(threatResult, outcome.geoReason)
+			reason = threatResult.DetectionMethod
+			if outcome.geoBlocked {
+				action = "block"
+			} else {
+				action = "flagged"
+			}
+		}
 		e.logQuery(domainName, clientIP, action, reason, threatResult)
 		success = true
 	}
+}
+
+// answerIPs extracts the A and AAAA record IPs from a DNS response.
+func answerIPs(resp *dns.Msg) []net.IP {
+	if resp == nil {
+		return nil
+	}
+	ips := make([]net.IP, 0, len(resp.Answer))
+	for _, rr := range resp.Answer {
+		switch v := rr.(type) {
+		case *dns.A:
+			ips = append(ips, v.A)
+		case *dns.AAAA:
+			ips = append(ips, v.AAAA)
+		}
+	}
+	return ips
+}
+
+// enrichThreat folds a GeoIP match into a threat result so it is logged as
+// suspicious without clobbering an existing heuristic detection.
+func enrichThreat(tr threat.Result, reason string) threat.Result {
+	tr.IsSuspicious = true
+	if tr.DetectionMethod == "" {
+		tr.DetectionMethod = "geoip"
+	}
+	if tr.Reason == "" {
+		tr.Reason = reason
+	}
+	if tr.ThreatScore == 0 {
+		tr.ThreatScore = 0.6
+	}
+	return tr
 }
 
 func (e *Engine) logQuery(domain, clientIP, action, reason string, tr threat.Result) {

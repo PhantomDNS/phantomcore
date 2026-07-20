@@ -10,6 +10,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/miekg/dns v1.1.68
+	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/prometheus/client_golang v1.20.5
 	github.com/sirupsen/logrus v1.9.3
 	github.com/willf/bloom v2.0.3+incompatible

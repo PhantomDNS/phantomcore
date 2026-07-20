@@ -49,6 +49,14 @@ dataplane:
   # typosquat_brands:
   #   - "paypal.com"
   # typosquat_block: false
+  # Optional ASN/GeoIP answer filtering. Disabled unless db_path points at a
+  # MaxMind-format database. Also configurable via env: GEOIP_DB_PATH,
+  # BLOCKED_ASNS (comma ints), BLOCKED_COUNTRIES (comma ISO codes), GEOIP_BLOCK.
+  # geoip:
+  #   db_path: "/app/data/GeoLite2-ASN.mmdb"
+  #   blocked_asns: [64500]
+  #   blocked_countries: ["RU", "KP"]
+  #   block: false   # false = flag only (default), true = block the answer
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"
