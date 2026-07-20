@@ -10,8 +10,9 @@ import (
 type metricsSlice struct {
 	startUnix int64 // unix timestamp (seconds) for slice start
 
-	total  atomic.Uint64
-	errors atomic.Uint64
+	total   atomic.Uint64
+	errors  atomic.Uint64
+	blocked atomic.Uint64
 
 	latency [BucketCount]atomic.Uint64
 }
@@ -30,8 +31,9 @@ const (
 )
 
 type AggregatedMetrics struct {
-	Total  uint64
-	Errors uint64
+	Total   uint64
+	Errors  uint64
+	Blocked uint64
 
 	Buckets [BucketCount]uint64
 }
@@ -88,6 +90,19 @@ func (m *QueryMetrics) Record(elapsed time.Duration, success bool) {
 	s.latency[b].Add(1)
 }
 
+// RecordBlocked increments the blocked-query counter for the current window
+// slice. It tracks queries denied by the blocklist or a deny policy so that a
+// rolling blocked percentage can be derived alongside total/error counts.
+func (m *QueryMetrics) RecordBlocked() {
+	s := m.currentSlice()
+	s.blocked.Add(1)
+}
+
+// Window returns the rolling window duration the metrics are aggregated over.
+func (m *QueryMetrics) Window() time.Duration {
+	return m.windowSize
+}
+
 func (m *QueryMetrics) Aggregate() AggregatedMetrics {
 	var out AggregatedMetrics
 
@@ -103,6 +118,7 @@ func (m *QueryMetrics) Aggregate() AggregatedMetrics {
 
 		out.Total += s.total.Load()
 		out.Errors += s.errors.Load()
+		out.Blocked += s.blocked.Load()
 
 		for b := 0; b < int(BucketCount); b++ {
 			out.Buckets[b] += s.latency[b].Load()
