@@ -44,6 +44,7 @@ type Engine struct {
 	queryLog        repositories.QueryLogRepository
 	statistics      repositories.StatisticsRepository
 	threatDetector  *threat.Detector
+	exporter        *Exporter
 
 	// fastFlux is nil when fast-flux detection is disabled (the default). When
 	// set, upstream answers on the allow path are fed to it and tripping domains
@@ -136,6 +137,14 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		logger.Log.Infof("NOD detection enabled: window=%dh block=%v", cfg.NODWindowHours, cfg.NODBlock)
 	}
 
+	// Event export is optional and defaults to OFF. A nil exporter is a valid
+	// no-op; a bad target is logged and skipped inside NewExporter.
+	exporter, err := NewExporter(cfg.SyslogAddr, cfg.EventWebhookURL)
+	if err != nil {
+		logger.Log.Warnf("event export disabled: %v", err)
+		exporter = nil
+	}
+
 	e := &Engine{
 		upstreamManager:      mgr,
 		policyEngine:         pE,
@@ -144,6 +153,7 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		queryLog:             repos.QueryLogs,
 		statistics:           repos.Statistics,
 		threatDetector:       threat.NewDetector(),
+		exporter:             exporter,
 		threatBlockThreshold: cfg.ThreatBlockThreshold,
 		threatBlockDryRun:    cfg.ThreatBlockDryRun,
 		abusedTLDs:           abusedTLDs,
@@ -193,6 +203,7 @@ func (e *Engine) Shutdown() {
 	if e.upstreamManager != nil {
 		e.upstreamManager.Close()
 	}
+	e.exporter.Close() // nil-safe
 }
 
 func (e *Engine) respondBlocked(w dns.ResponseWriter, r *dns.Msg, domain, reason string) {
@@ -595,6 +606,19 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func (e *Engine) logQuery(domain, clientIP, action, reason string, tr threat.Result) {
+	// Export the event to external sinks (syslog/webhook) if enabled.
+	// Non-blocking with drop-on-full; a nil exporter is a no-op.
+	e.exporter.Export(Event{
+		Timestamp:       time.Now().UTC(),
+		Domain:          domain,
+		ClientIP:        clientIP,
+		Action:          action,
+		IsSuspicious:    tr.IsSuspicious,
+		ThreatScore:     tr.ThreatScore,
+		DetectionMethod: tr.DetectionMethod,
+		ThreatReason:    tr.Reason,
+	})
+
 	if e.queryLog == nil {
 		return
 	}

@@ -98,6 +98,11 @@ type DataPlaneConfig struct {
 	// FastFluxTTLMaxSec is the maximum TTL (seconds) still considered "low" for
 	// fast-flux flagging (default 300).
 	FastFluxTTLMaxSec int `yaml:"fast_flux_ttl_max_sec"`
+
+	// Event export targets. Both default empty = export disabled (OFF).
+	// SyslogAddr accepts "udp://host:514" or "tcp://host:514".
+	SyslogAddr      string `yaml:"syslog_addr"`
+	EventWebhookURL string `yaml:"event_webhook_url"`
 }
 
 // WatchdogIntervalDuration parses WatchdogInterval into a duration. It returns 0
@@ -323,6 +328,12 @@ var DefaultConfig = func() *Config {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.DataPlane.FastFluxDetection = b
 		}
+	}
+	if addr := os.Getenv("SYSLOG_ADDR"); addr != "" {
+		cfg.DataPlane.SyslogAddr = addr
+	}
+	if webhook := os.Getenv("EVENT_WEBHOOK_URL"); webhook != "" {
+		cfg.DataPlane.EventWebhookURL = webhook
 	}
 	return cfg
 }()
