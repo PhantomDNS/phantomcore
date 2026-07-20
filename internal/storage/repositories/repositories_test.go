@@ -133,6 +133,48 @@ func TestBlocklistRepo_SaveSnapshotWithEntries(t *testing.T) {
 	}
 }
 
+func TestBlocklistRepo_GetRecentSnapshots(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewBlocklistRepo(db)
+
+	base := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	// Insert three snapshots for src-a (oldest -> newest) plus one for src-b.
+	db.Create(&models.BlocklistSnapshot{SourceID: "src-a", Size: 100, CreatedAt: base})
+	db.Create(&models.BlocklistSnapshot{SourceID: "src-a", Size: 200, CreatedAt: base.Add(time.Hour)})
+	db.Create(&models.BlocklistSnapshot{SourceID: "src-a", Size: 300, CreatedAt: base.Add(2 * time.Hour)})
+	db.Create(&models.BlocklistSnapshot{SourceID: "src-b", Size: 999, CreatedAt: base})
+
+	// limit=2 returns the two newest for src-a, most recent first.
+	snaps, err := repo.GetRecentSnapshots("src-a", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 2 {
+		t.Fatalf("expected 2 snapshots, got %d", len(snaps))
+	}
+	if snaps[0].Size != 300 || snaps[1].Size != 200 {
+		t.Fatalf("expected newest-first [300,200], got [%d,%d]", snaps[0].Size, snaps[1].Size)
+	}
+
+	// limit<=0 returns all snapshots for the source, and only that source.
+	all, err := repo.GetRecentSnapshots("src-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 snapshots for src-a, got %d", len(all))
+	}
+
+	// A source with no snapshots returns an empty slice, not an error.
+	none, err := repo.GetRecentSnapshots("missing", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("expected 0 snapshots for missing source, got %d", len(none))
+	}
+}
+
 func TestBlocklistRepo_GetAll_Empty(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewBlocklistRepo(db)

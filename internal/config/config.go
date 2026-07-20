@@ -27,6 +27,10 @@ type DataPlaneConfig struct {
 	BlocklistUpdateInterval string           `yaml:"blocklist_update_interval"`
 	MetricsAddr             string           `yaml:"metrics_addr"`
 
+	// BlocklistHealthInterval controls how often blocklist source health is
+	// checked. Empty (zero value) uses the package default (1h).
+	BlocklistHealthInterval string `yaml:"blocklist_health_interval"`
+
 	// ThreatBlockThreshold enables enforcement of the heuristic threat detector.
 	// When > 0, a query scored suspicious with ThreatScore >= threshold is blocked
 	// (or logged as a would-be block when ThreatBlockDryRun is set). 0 disables
@@ -136,6 +140,7 @@ func defaultConfig() *Config {
 			UpstreamResolvers:       []string{"8.8.8.8:53", "1.1.1.1:53"},
 			BlocklistUpdateInterval: "6h",
 			MetricsAddr:             "0.0.0.0:9153",
+			BlocklistHealthInterval: "1h",
 			GRPCServer: GRPCServerConfig{
 				Port:       50051,
 				ListenAddr: "localhost:50051",
@@ -173,6 +178,9 @@ var DefaultConfig = func() *Config {
 	}
 	if interval := os.Getenv("BLOCKLIST_UPDATE_INTERVAL"); interval != "" {
 		cfg.DataPlane.BlocklistUpdateInterval = interval
+	}
+	if interval := os.Getenv("BLOCKLIST_HEALTH_INTERVAL"); interval != "" {
+		cfg.DataPlane.BlocklistHealthInterval = interval
 	}
 	if v := os.Getenv("THREAT_BLOCK_THRESHOLD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
