@@ -76,6 +76,10 @@ type DataPlaneConfig struct {
 	// WatchdogFailureThreshold is the number of consecutive unhealthy probes
 	// before the watchdog attempts recovery. <= 0 uses the watchdog default.
 	WatchdogFailureThreshold int `yaml:"watchdog_failure_threshold"`
+
+	// ServeStale, when true, answers from an expired cache entry if the upstream
+	// fails, so a transient upstream/ISP blip does not take DNS down. Default off.
+	ServeStale bool `yaml:"serve_stale"`
 }
 
 // WatchdogIntervalDuration parses WatchdogInterval into a duration. It returns 0
@@ -276,6 +280,9 @@ var DefaultConfig = func() *Config {
 		} else {
 			logger.Log.Warnf("Invalid WATCHDOG_FAILURE_THRESHOLD %q, using default", v)
 		}
+	}
+	if v := os.Getenv("SERVE_STALE"); v == "true" || v == "1" {
+		cfg.DataPlane.ServeStale = true
 	}
 	return cfg
 }()
