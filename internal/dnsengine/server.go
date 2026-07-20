@@ -26,7 +26,7 @@ func NewServer(cfg config.DataPlaneConfig, engine *Engine) (*Server, error) {
 }
 
 func (s *Server) Run() {
-	defer s.engine.upstreamManager.Close()
+	defer s.engine.Shutdown()
 
 	// bind handler for DNS request
 	dns.HandleFunc(".", s.engine.ProcessDNSQuery)

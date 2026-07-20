@@ -30,6 +30,10 @@ func RegisterRoutes(r *gin.Engine, apiHandler *handlers.APIHandler) {
 			dns.GET("/engine", apiHandler.GetDnsEngineStatus)
 			dns.POST("/engine", apiHandler.ToggleDnsEngine)
 			dns.GET("/resolvers", apiHandler.ListResolvers)
+			dns.POST("/resolvers", apiHandler.CreateResolver)
+			dns.PUT("/resolvers/:id", apiHandler.UpdateResolver)
+			dns.PATCH("/resolvers/:id", apiHandler.UpdateResolver)
+			dns.DELETE("/resolvers/:id", apiHandler.DeleteResolver)
 			dns.GET("/metrics", apiHandler.GetDnsMetrics)
 		}
 

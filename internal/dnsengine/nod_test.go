@@ -106,7 +106,7 @@ func TestNODLedger_BoundedEviction(t *testing.T) {
 // path is deterministic and does not touch the network.
 func newNODEngine(window time.Duration, block bool, clk func() time.Time) *Engine {
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
-	e.upstreamManager = &UpstreamManager{} // no pools -> Exchange returns nil,nil
+	e.setUpstreamExchanger(&UpstreamManager{}) // no pools -> Exchange returns nil,nil
 	if window > 0 {
 		e.nodLedger = newNODLedger(window, 0, clk)
 	}

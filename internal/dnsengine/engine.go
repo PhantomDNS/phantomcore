@@ -2,6 +2,7 @@
 package dnsengine
 
 import (
+	"errors"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -21,6 +22,11 @@ import (
 type BlocklistChecker interface {
 	IsBlocked(domain string) (bool, error)
 }
+
+// errNoUpstreamResolvers is returned by forwardUpstream when no upstream
+// exchanger has been configured yet (e.g. before the first SetUpstreamResolvers
+// call, or if construction failed).
+var errNoUpstreamResolvers = errors.New("no upstream resolvers configured")
 
 // upstreamExchanger is the subset of *UpstreamManager the engine depends on.
 // Declaring it as an interface keeps forwardUpstream testable without a live
@@ -48,7 +54,11 @@ type RuntimeState struct {
 }
 
 type Engine struct {
-	upstreamManager upstreamExchanger
+	// upstreamManager is swapped atomically so the resolver set can be
+	// reconfigured live (I-003) without racing in-flight query forwarding. It
+	// is held as the upstreamExchanger interface (rather than *UpstreamManager
+	// directly) so tests can substitute a mock exchanger via setUpstreamExchanger.
+	upstreamManager atomic.Pointer[upstreamExchanger]
 	policyEngine    *policy.Engine
 	blocklist       BlocklistChecker
 	nrd             NRDChecker
@@ -180,7 +190,6 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 	detector.SetTyposquatBlock(cfg.TyposquatBlock)
 
 	e := &Engine{
-		upstreamManager:      mgr,
 		policyEngine:         pE,
 		state:                state,
 		metrics:              qm,
@@ -197,6 +206,7 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		nodLedger:            ledger,
 		nodBlock:             cfg.NODBlock,
 	}
+	e.setUpstreamExchanger(mgr)
 	if cfg.ServeStale {
 		e.serveStale = true
 		e.cache = newAnswerCache(defaultCacheSize, defaultStaleFor)
@@ -232,10 +242,39 @@ func (e *Engine) SetAcceptQueries(enabled bool) {
 	e.state.acceptQueries.Store(enabled)
 }
 
+// SetUpstreamResolvers rebuilds the upstream manager from the given ordered
+// resolver addresses and swaps it in atomically. This is the live-apply path
+// for I-003: control-plane resolver edits take effect on query forwarding
+// without a dataplane restart.
+//
+// The previous manager is closed after the swap. New queries always read the
+// new manager via the atomic pointer; a query that loaded the old pointer just
+// before the swap may observe a closed pool and fail (it is retried by the
+// engine on the next query). This brief, bounded disruption is acceptable for
+// an infrequent configuration change.
+func (e *Engine) SetUpstreamResolvers(resolvers []string) error {
+	mgr, err := NewUpstreamManager(resolvers, 4)
+	if err != nil {
+		return err
+	}
+	var ex upstreamExchanger = mgr
+	if old := e.upstreamManager.Swap(&ex); old != nil {
+		(*old).Close()
+	}
+	return nil
+}
+
+// setUpstreamExchanger stores ex as the engine's upstream exchanger. Production
+// callers use SetUpstreamResolvers; tests use this directly to substitute a
+// mock exchanger without a live upstream.
+func (e *Engine) setUpstreamExchanger(ex upstreamExchanger) {
+	e.upstreamManager.Store(&ex)
+}
+
 // Cleanup the resources used by the Engine
 func (e *Engine) Shutdown() {
-	if e.upstreamManager != nil {
-		e.upstreamManager.Close()
+	if p := e.upstreamManager.Load(); p != nil {
+		(*p).Close()
 	}
 	e.exporter.Close() // nil-safe
 }
@@ -342,7 +381,14 @@ type forwardOutcome struct {
 // filter's block decision). The returned forwardOutcome tells the caller
 // whether fast-flux and/or GeoIP detectors fired.
 func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) forwardOutcome {
-	resp, err := e.upstreamManager.Exchange(r, 5, 2)
+	p := e.upstreamManager.Load()
+	var resp *dns.Msg
+	var err error
+	if p == nil {
+		err = errNoUpstreamResolvers
+	} else {
+		resp, err = (*p).Exchange(r, 5, 2)
+	}
 	if err != nil || resp == nil {
 		if err != nil {
 			logger.Log.Error("Upstream query failed: " + err.Error())

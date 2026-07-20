@@ -30,6 +30,12 @@ service DataPlaneStatusService {
   // Enables or disables DNS query processing in the dataplane.
   rpc SetAcceptQueries(SetAcceptQueriesRequest)
   returns (SetAcceptQueriesResponse);
+
+  // Replaces the ordered set of upstream resolvers used by the DNS engine.
+  // The dataplane rebuilds its upstream connection pools and applies the
+  // change to live query forwarding.
+  rpc SetUpstreamResolvers(SetUpstreamResolversRequest)
+  returns (SetUpstreamResolversResponse);
 }
 
 // Request to enable or disable DNS query processing.
@@ -42,4 +48,20 @@ message SetAcceptQueriesRequest {
 message SetAcceptQueriesResponse {
   // Indicates whether the request was applied successfully.
   bool ok = 1;
+}
+
+// Request to replace the upstream resolver set.
+message SetUpstreamResolversRequest {
+  // Ordered list of upstream resolver addresses (host:port).
+  // Order defines failover priority (first entry tried first).
+  repeated string resolvers = 1;
+}
+
+// Response for SetUpstreamResolvers operation.
+message SetUpstreamResolversResponse {
+  // Indicates whether the new resolver set was applied successfully.
+  bool ok = 1;
+
+  // Optional error detail when ok is false.
+  string error = 2;
 }
