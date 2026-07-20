@@ -139,6 +139,17 @@ func (inv *Inventory) Stop() {
 	inv.wg.Wait()
 }
 
+// Lookup returns the device currently known for the given IP. The second
+// return value is false when the IP has not been observed (or collection is
+// disabled). It backs infected-device alerting, which resolves a client IP to
+// its MAC and hostname.
+func (inv *Inventory) Lookup(ip string) (Device, bool) {
+	inv.mu.RLock()
+	defer inv.mu.RUnlock()
+	d, ok := inv.devices[ip]
+	return d, ok
+}
+
 // Devices returns a snapshot of the inventory sorted by IP. The returned
 // slice is a copy and safe for the caller to mutate.
 func (inv *Inventory) Devices() []Device {
