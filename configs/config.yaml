@@ -16,6 +16,9 @@ dataplane:
   # Reject upstream answers that map a public name to a private/loopback/
   # link-local IP (DNS rebinding defense). Env override: REBIND_PROTECTION.
   rebind_protection: false
+  # Optional per-client DNS query rate limit (queries/sec per client IP).
+  # 0 disables it (default). Env override: CLIENT_RATE_LIMIT_PER_SEC.
+  client_rate_limit_per_sec: 0
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"

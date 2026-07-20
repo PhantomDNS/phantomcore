@@ -41,6 +41,10 @@ type DataPlaneConfig struct {
 	// RebindProtection rejects upstream answers that map a public name to a
 	// private/loopback/link-local IP (DNS rebinding defense). Default false.
 	RebindProtection bool `yaml:"rebind_protection"`
+
+	// ClientRateLimitPerSec caps DNS queries accepted per client IP each second.
+	// 0 (the default) disables rate limiting entirely.
+	ClientRateLimitPerSec int `yaml:"client_rate_limit_per_sec"`
 }
 
 type ControlPlaneConfig struct {
@@ -110,6 +114,13 @@ var DefaultConfig = func() *Config {
 			cfg.DataPlane.RebindProtection = b
 		} else {
 			logger.Log.Warnf("Invalid REBIND_PROTECTION value %q: %v", v, err)
+		}
+	}
+	if v := os.Getenv("CLIENT_RATE_LIMIT_PER_SEC"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.DataPlane.ClientRateLimitPerSec = n
+		} else {
+			logger.Log.Warnf("Invalid CLIENT_RATE_LIMIT_PER_SEC=%q, ignoring: %v", v, err)
 		}
 	}
 	return cfg
