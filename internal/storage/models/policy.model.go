@@ -12,6 +12,11 @@ type Policy struct {
 	RedirectIP  string
 	Domains     string `gorm:"type:text"` // JSON array stored as text
 	Regexes     string `gorm:"type:text"` // JSON array stored as text
+	// ClientCIDRs scopes the policy to specific clients by IP/CIDR, stored as a
+	// JSON array of strings. Empty (the migration default) means the policy is
+	// unscoped and applies to all clients, so AutoMigrate adds the column
+	// safely to existing rows without changing their behavior (I-014).
+	ClientCIDRs string `gorm:"type:text"`
 	Priority    int    `gorm:"default:0"`
 	Enabled     bool   `gorm:"default:true"`
 

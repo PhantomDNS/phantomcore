@@ -15,7 +15,7 @@ import (
 // dataplane (poll-based reload) and the control plane (immediate reload),
 // so the two never drift.
 func ToEnginePolicy(m models.Policy) policy.Policy {
-	var domains, regexes, scheduleDays []string
+	var domains, regexes, scheduleDays, clientCIDRs []string
 	if m.Domains != "" {
 		_ = json.Unmarshal([]byte(m.Domains), &domains)
 	}
@@ -24,6 +24,9 @@ func ToEnginePolicy(m models.Policy) policy.Policy {
 	}
 	if m.ScheduleDays != "" {
 		_ = json.Unmarshal([]byte(m.ScheduleDays), &scheduleDays)
+	}
+	if m.ClientCIDRs != "" {
+		_ = json.Unmarshal([]byte(m.ClientCIDRs), &clientCIDRs)
 	}
 	return policy.Policy{
 		ID:           m.ID,
@@ -40,6 +43,7 @@ func ToEnginePolicy(m models.Policy) policy.Policy {
 		StartTime:    m.ScheduleStart,
 		EndTime:      m.ScheduleEnd,
 		Timezone:     m.Timezone,
+		ClientCIDRs:  clientCIDRs,
 	}
 }
 

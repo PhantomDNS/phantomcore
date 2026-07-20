@@ -42,7 +42,7 @@ func TestEvaluate_UnscheduledAlwaysActive(t *testing.T) {
 		time.Date(2026, 12, 25, 23, 59, 0, 0, time.UTC),
 	} {
 		e := engineAt(t, now, p)
-		if d, _ := e.Evaluate("blocked.com"); d.Action != ActionDeny {
+		if d, _ := e.Evaluate("blocked.com", ""); d.Action != ActionDeny {
 			t.Fatalf("unscheduled policy should always block; got %v at %v", d.Action, now)
 		}
 	}
@@ -58,7 +58,7 @@ func TestEvaluate_ActiveInsideWindow(t *testing.T) {
 
 	// 12:00 IST is inside [09:00,17:00) -> active -> blocked.
 	e := engineAt(t, time.Date(2026, 7, 20, 12, 0, 0, 0, ist), p)
-	if d, _ := e.Evaluate("social.example.com"); d.Action != ActionDeny {
+	if d, _ := e.Evaluate("social.example.com", ""); d.Action != ActionDeny {
 		t.Fatalf("expected block inside window, got %v", d.Action)
 	}
 }
@@ -73,7 +73,7 @@ func TestEvaluate_InactiveOutsideWindow(t *testing.T) {
 
 	// 20:00 IST is outside the window -> inactive -> default allow.
 	e := engineAt(t, time.Date(2026, 7, 20, 20, 0, 0, 0, ist), p)
-	if d, _ := e.Evaluate("social.example.com"); d.Action != ActionAllow {
+	if d, _ := e.Evaluate("social.example.com", ""); d.Action != ActionAllow {
 		t.Fatalf("expected allow outside window, got %v", d.Action)
 	}
 }
@@ -85,11 +85,11 @@ func TestEvaluate_WindowBoundaries(t *testing.T) {
 		StartTime: "09:00", EndTime: "17:00", Timezone: "Asia/Kolkata",
 	}
 	// Start is inclusive.
-	if d, _ := engineAt(t, time.Date(2026, 7, 20, 9, 0, 0, 0, ist), p).Evaluate("x.com"); d.Action != ActionDeny {
+	if d, _ := engineAt(t, time.Date(2026, 7, 20, 9, 0, 0, 0, ist), p).Evaluate("x.com", ""); d.Action != ActionDeny {
 		t.Fatalf("expected block at inclusive start 09:00, got %v", d.Action)
 	}
 	// End is exclusive.
-	if d, _ := engineAt(t, time.Date(2026, 7, 20, 17, 0, 0, 0, ist), p).Evaluate("x.com"); d.Action != ActionAllow {
+	if d, _ := engineAt(t, time.Date(2026, 7, 20, 17, 0, 0, 0, ist), p).Evaluate("x.com", ""); d.Action != ActionAllow {
 		t.Fatalf("expected allow at exclusive end 17:00, got %v", d.Action)
 	}
 }
@@ -106,7 +106,7 @@ func TestEvaluate_TimezoneHandling(t *testing.T) {
 		ID: "utc", Action: "BLOCK", Priority: 100, Domains: []string{"x.com"},
 		StartTime: "09:00", EndTime: "17:00", Timezone: "UTC",
 	}
-	if d, _ := engineAt(t, nowUTC, pUTC).Evaluate("x.com"); d.Action != ActionDeny {
+	if d, _ := engineAt(t, nowUTC, pUTC).Evaluate("x.com", ""); d.Action != ActionDeny {
 		t.Fatalf("UTC: expected block at 12:00 UTC, got %v", d.Action)
 	}
 
@@ -115,7 +115,7 @@ func TestEvaluate_TimezoneHandling(t *testing.T) {
 		ID: "ist", Action: "BLOCK", Priority: 100, Domains: []string{"x.com"},
 		StartTime: "09:00", EndTime: "17:00", Timezone: "Asia/Kolkata",
 	}
-	if d, _ := engineAt(t, nowUTC, pIST).Evaluate("x.com"); d.Action != ActionAllow {
+	if d, _ := engineAt(t, nowUTC, pIST).Evaluate("x.com", ""); d.Action != ActionAllow {
 		t.Fatalf("IST: expected allow (17:30 IST past window), got %v", d.Action)
 	}
 }
@@ -132,7 +132,7 @@ func TestEvaluate_DayOfWeek(t *testing.T) {
 		ID: "today", Action: "BLOCK", Priority: 100, Domains: []string{"x.com"},
 		ScheduleDays: []string{today}, Timezone: "UTC",
 	}
-	if d, _ := engineAt(t, base, pToday).Evaluate("x.com"); d.Action != ActionDeny {
+	if d, _ := engineAt(t, base, pToday).Evaluate("x.com", ""); d.Action != ActionDeny {
 		t.Fatalf("expected block on scheduled day %q, got %v", today, d.Action)
 	}
 
@@ -141,7 +141,7 @@ func TestEvaluate_DayOfWeek(t *testing.T) {
 		ID: "tomorrow", Action: "BLOCK", Priority: 100, Domains: []string{"x.com"},
 		ScheduleDays: []string{tomorrow}, Timezone: "UTC",
 	}
-	if d, _ := engineAt(t, base, pTomorrow).Evaluate("x.com"); d.Action != ActionAllow {
+	if d, _ := engineAt(t, base, pTomorrow).Evaluate("x.com", ""); d.Action != ActionAllow {
 		t.Fatalf("expected allow off scheduled day (%q only), got %v", tomorrow, d.Action)
 	}
 }
@@ -157,12 +157,12 @@ func TestEvaluate_DayAndWindowCombined(t *testing.T) {
 		ScheduleDays: []string{today}, StartTime: "09:00", EndTime: "17:00", Timezone: "UTC",
 	}
 	// Right day, inside window -> block.
-	if d, _ := engineAt(t, base, p).Evaluate("x.com"); d.Action != ActionDeny {
+	if d, _ := engineAt(t, base, p).Evaluate("x.com", ""); d.Action != ActionDeny {
 		t.Fatalf("expected block on day+window, got %v", d.Action)
 	}
 	// Right day, outside window -> allow.
 	outside := time.Date(2026, 7, 20, 8, 0, 0, 0, time.UTC)
-	if d, _ := engineAt(t, outside, p).Evaluate("x.com"); d.Action != ActionAllow {
+	if d, _ := engineAt(t, outside, p).Evaluate("x.com", ""); d.Action != ActionAllow {
 		t.Fatalf("expected allow on right day but outside window, got %v", d.Action)
 	}
 }
@@ -186,7 +186,7 @@ func TestEvaluate_OvernightWindow(t *testing.T) {
 	}
 	for _, tc := range cases {
 		now := time.Date(2026, 7, 20, tc.hour, 0, 0, 0, time.UTC)
-		if d, _ := engineAt(t, now, p).Evaluate("x.com"); d.Action != tc.want {
+		if d, _ := engineAt(t, now, p).Evaluate("x.com", ""); d.Action != tc.want {
 			t.Fatalf("overnight window at %02d:00: want %v, got %v", tc.hour, tc.want, d.Action)
 		}
 	}
@@ -205,13 +205,13 @@ func TestEvaluate_ScheduledFallsThroughToParent(t *testing.T) {
 
 	// 20:00 UTC: child inactive, so the always-on parent BLOCK applies.
 	e := engineAt(t, time.Date(2026, 7, 20, 20, 0, 0, 0, time.UTC), child, parent)
-	if d, _ := e.Evaluate("ads.example.com"); d.Action != ActionDeny || d.PolicyID != "parent" {
+	if d, _ := e.Evaluate("ads.example.com", ""); d.Action != ActionDeny || d.PolicyID != "parent" {
 		t.Fatalf("expected fall-through to parent BLOCK, got action=%v id=%q", d.Action, d.PolicyID)
 	}
 
 	// 12:00 UTC: child active (higher priority ALLOW) wins over parent.
 	e = engineAt(t, time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), child, parent)
-	if d, _ := e.Evaluate("ads.example.com"); d.Action != ActionAllow || d.PolicyID != "child" {
+	if d, _ := e.Evaluate("ads.example.com", ""); d.Action != ActionAllow || d.PolicyID != "child" {
 		t.Fatalf("expected active child ALLOW to win, got action=%v id=%q", d.Action, d.PolicyID)
 	}
 }

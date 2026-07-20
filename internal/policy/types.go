@@ -51,6 +51,13 @@ type Policy struct {
 	// nil means always active. Unexported so gorm and encoding/json ignore it.
 	sched *compiledSchedule
 
+	// ClientCIDRs optionally scopes a policy to specific clients by IP/CIDR.
+	// Empty means the policy is unscoped and applies to all clients (I-014).
+	// Entries may be single IPs ("192.168.1.10") or CIDRs ("10.0.0.0/24"),
+	// IPv4 or IPv6. MAC-based scoping is intentionally left out of this first
+	// cut (it needs a client inventory).
+	ClientCIDRs []string `gorm:"-" json:"client_cidrs"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

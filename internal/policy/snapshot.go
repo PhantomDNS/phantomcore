@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"net"
 	"regexp"
 	"strings"
 
@@ -29,12 +30,19 @@ type PolicySnapshot struct {
 	// once at snapshot-build time and cached here.
 	Regexes   []compiledRegexRule
 	Wildcards []wildcardRule
+
+	// clientNets holds the parsed client-scope ranges for each scoped policy,
+	// keyed by policy ID. It is precomputed once at snapshot-build time so
+	// per-query client matching never re-parses CIDR strings. Unscoped
+	// policies are absent from this map (see matchesClient). (I-014)
+	clientNets map[string][]*net.IPNet
 }
 
 func buildSnapshot(policies []Policy) *PolicySnapshot {
 	exact := make(map[string][]*Policy)
 	var wildcards []wildcardRule
 	var regexes []compiledRegexRule
+	clientNets := make(map[string][]*net.IPNet)
 	totalDomains := 0
 
 	// Precompute each policy's schedule once (I-038). A nil result means the
@@ -75,6 +83,16 @@ func buildSnapshot(policies []Policy) *PolicySnapshot {
 			}
 			regexes = append(regexes, compiledRegexRule{re: re, policy: p})
 		}
+		// Precompute parsed client-scope ranges for scoped policies so
+		// per-query matching is allocation- and parse-free. Invalid entries
+		// are skipped here; the loader/control-plane validate on ingest, so a
+		// bad range means "no valid ranges" and the scoped policy simply never
+		// matches (fail-closed for scope, not for the whole policy set).
+		for _, c := range policies[i].ClientCIDRs {
+			if n, err := parseClientScope(c); err == nil {
+				clientNets[policies[i].ID] = append(clientNets[policies[i].ID], n)
+			}
+		}
 	}
 
 	// build the bloom filter
@@ -99,10 +117,11 @@ func buildSnapshot(policies []Policy) *PolicySnapshot {
 	}
 
 	return &PolicySnapshot{
-		Exact:     exact,
-		Bloom:     bf,
-		Regexes:   regexes,
-		Wildcards: wildcards,
+		Exact:      exact,
+		Bloom:      bf,
+		Regexes:    regexes,
+		Wildcards:  wildcards,
+		clientNets: clientNets,
 	}
 }
 
