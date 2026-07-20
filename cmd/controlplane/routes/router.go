@@ -59,6 +59,23 @@ func RegisterRoutes(r *gin.Engine, apiHandler *handlers.APIHandler) {
 			blocklists.DELETE("/:id", apiHandler.DeleteBlocklist)
 		}
 
+		// Category endpoints — curated feed catalog toggles (I-013/I-064/I-102/I-154)
+		categories := api.Group("/categories")
+		{
+			categories.GET("", apiHandler.ListCategories)
+			categories.GET("/:name", apiHandler.GetCategory)
+			categories.PATCH("/:name", apiHandler.ToggleCategory)
+			categories.PUT("/:name", apiHandler.ToggleCategory)
+		}
+
+		// Collection endpoints — per-app domain bundles (I-052)
+		collections := api.Group("/collections")
+		{
+			collections.GET("", apiHandler.ListCollections)
+			collections.PATCH("/:name", apiHandler.ToggleCollection)
+			collections.PUT("/:name", apiHandler.ToggleCollection)
+		}
+
 		// Analytics endpoints
 		analytics := api.Group("/analytics")
 		{
