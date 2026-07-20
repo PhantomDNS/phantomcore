@@ -35,6 +35,12 @@ type Engine struct {
 	queryLog        repositories.QueryLogRepository
 	statistics      repositories.StatisticsRepository
 	threatDetector  *threat.Detector
+
+	// threatBlockThreshold, when > 0, turns the heuristic threat detector from
+	// log-only into enforcement: a suspicious query with ThreatScore >= threshold
+	// is blocked. threatBlockDryRun logs a would-be block instead of blocking.
+	threatBlockThreshold float64
+	threatBlockDryRun    bool
 }
 
 func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
@@ -51,13 +57,15 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		return nil, err
 	}
 	return &Engine{
-		upstreamManager: mgr,
-		policyEngine:    pE,
-		state:           state,
-		metrics:         qm,
-		queryLog:        repos.QueryLogs,
-		statistics:      repos.Statistics,
-		threatDetector:  threat.NewDetector(),
+		upstreamManager:      mgr,
+		policyEngine:         pE,
+		state:                state,
+		metrics:              qm,
+		queryLog:             repos.QueryLogs,
+		statistics:           repos.Statistics,
+		threatDetector:       threat.NewDetector(),
+		threatBlockThreshold: cfg.ThreatBlockThreshold,
+		threatBlockDryRun:    cfg.ThreatBlockDryRun,
 	}, nil
 }
 
@@ -172,6 +180,33 @@ func stripSearchDomain(domain string) string {
 	return domain
 }
 
+// threatAction is the enforcement decision for a scored query.
+type threatAction int
+
+const (
+	threatNone   threatAction = iota // do not enforce; forward as usual
+	threatBlock                      // block the query
+	threatDryRun                     // log a would-be block, but still allow
+)
+
+// shouldEnforceThreat reports whether a scored threat result crosses the
+// configured block threshold. A threshold of 0 disables enforcement, preserving
+// the historical log-only behaviour.
+func shouldEnforceThreat(tr threat.Result, threshold float64) bool {
+	return threshold > 0 && tr.IsSuspicious && tr.ThreatScore >= threshold
+}
+
+// threatDecision maps a scored result to an enforcement action for this engine.
+func (e *Engine) threatDecision(tr threat.Result) threatAction {
+	if !shouldEnforceThreat(tr, e.threatBlockThreshold) {
+		return threatNone
+	}
+	if e.threatBlockDryRun {
+		return threatDryRun
+	}
+	return threatBlock
+}
+
 // ProcessDNSQuery processes the DNS query and returns a response
 func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 	if r == nil || len(r.Question) == 0 {
@@ -243,6 +278,22 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		success = true
 
 	default: // policy.ActionAllow
+		// The query is not on any blocklist or block policy. If threat enforcement
+		// is enabled, a sufficiently suspicious domain is blocked here (dry-run only
+		// logs). Threshold 0 keeps the historical log-only behaviour.
+		switch e.threatDecision(threatResult) {
+		case threatBlock:
+			logger.Log.Warnf("Blocking suspicious domain %s (score=%.2f >= %.2f, method=%s)",
+				domainName, threatResult.ThreatScore, e.threatBlockThreshold, threatResult.DetectionMethod)
+			e.logQuery(domainName, clientIP, "block", threatResult)
+			e.respondBlocked(w, r, domainName, "threat:"+threatResult.DetectionMethod)
+			success = true
+			return
+		case threatDryRun:
+			logger.Log.Warnf("[threat dry-run] would block %s (score=%.2f >= %.2f, method=%s)",
+				domainName, threatResult.ThreatScore, e.threatBlockThreshold, threatResult.DetectionMethod)
+		}
+
 		action := "allow"
 		if threatResult.IsSuspicious {
 			action = "flagged"
