@@ -1,3 +1,10 @@
+# local_only: data-custody master switch (I-061).
+# When true, all non-resolution outbound ("phone-home") calls are disabled:
+# telemetry, update checks, crash reporting, remote config, heartbeats.
+# Core DNS resolution and operator-configured blocklist fetches still work.
+# Overridable at runtime via the LOCAL_ONLY environment variable. Default: false.
+local_only: false
+
 dataplane:
   listen_addr: "0.0.0.0:1053"
   upstream_resolvers:
