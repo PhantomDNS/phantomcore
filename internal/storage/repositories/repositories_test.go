@@ -175,6 +175,34 @@ func TestBlocklistRepo_GetRecentSnapshots(t *testing.T) {
 	}
 }
 
+func TestBlocklistRepo_CountSnapshots(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewBlocklistRepo(db)
+
+	// Fresh DB — no snapshots yet (drives the offline bundle seed decision).
+	n, err := repo.CountSnapshots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 snapshots on fresh DB, got %d", n)
+	}
+
+	src := models.BlocklistSource{ID: "src1", Name: "Test", URL: "http://x", Format: "hosts", Enabled: true, CreatedAt: time.Now()}
+	db.Create(&src)
+	if _, err := repo.SaveSnapshotWithEntries(src, "hash", []models.BlocklistEntry{{Domain: "a.com", SourceID: "src1"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err = repo.CountSnapshots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 snapshot after save, got %d", n)
+	}
+}
+
 func TestBlocklistRepo_GetAll_Empty(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewBlocklistRepo(db)

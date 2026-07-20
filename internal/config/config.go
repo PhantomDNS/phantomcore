@@ -315,3 +315,20 @@ func configPath() string {
 	}
 	return "/app/configs/config.yaml"
 }
+
+// BundledBlocklistEnabled reports whether the embedded offline blocklist should
+// seed the DB on first boot. It is ON by default and can be disabled by setting
+// BUNDLED_BLOCKLIST to a falsey value (e.g. "false", "0"). An unset or
+// unparseable value keeps the default-on behaviour.
+func BundledBlocklistEnabled() bool {
+	v := os.Getenv("BUNDLED_BLOCKLIST")
+	if v == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(v)
+	if err != nil {
+		logger.Log.Warnf("invalid BUNDLED_BLOCKLIST value %q; defaulting to enabled", v)
+		return true
+	}
+	return enabled
+}
