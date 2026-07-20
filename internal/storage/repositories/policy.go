@@ -2,9 +2,39 @@
 package repositories
 
 import (
+	"encoding/json"
+
+	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"gorm.io/gorm"
 )
+
+// ToEnginePolicy converts a stored policy model into the in-memory policy
+// used by the evaluation engine. Domains and Regexes are persisted as JSON
+// text and decoded here. This is the single conversion used by both the
+// dataplane (poll-based reload) and the control plane (immediate reload),
+// so the two never drift.
+func ToEnginePolicy(m models.Policy) policy.Policy {
+	var domains, regexes []string
+	if m.Domains != "" {
+		_ = json.Unmarshal([]byte(m.Domains), &domains)
+	}
+	if m.Regexes != "" {
+		_ = json.Unmarshal([]byte(m.Regexes), &regexes)
+	}
+	return policy.Policy{
+		ID:          m.ID,
+		Name:        m.Name,
+		Description: m.Description,
+		Category:    m.Category,
+		Action:      m.Action,
+		Redirect:    m.RedirectIP,
+		Enabled:     m.Enabled,
+		Priority:    m.Priority,
+		Domains:     domains,
+		Regexes:     regexes,
+	}
+}
 
 type PolicyRepository interface {
 	List() ([]models.Policy, error)

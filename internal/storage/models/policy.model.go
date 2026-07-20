@@ -11,6 +11,7 @@ type Policy struct {
 	Action      string `gorm:"not null"` // BLOCK, ALLOW, REDIRECT
 	RedirectIP  string
 	Domains     string `gorm:"type:text"` // JSON array stored as text
+	Regexes     string `gorm:"type:text"` // JSON array stored as text
 	Priority    int    `gorm:"default:0"`
 	Enabled     bool   `gorm:"default:true"`
 	CreatedAt   time.Time
