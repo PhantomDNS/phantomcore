@@ -88,6 +88,93 @@ func TestDetector_DeepSubdomains(t *testing.T) {
 	}
 }
 
+func TestDetector_Typosquat_Flagged(t *testing.T) {
+	d := NewDetectorWithBrands([]string{"paypal.com"})
+
+	// xn--pypal-4ve.com decodes to "pаypal.com" where the second character is a
+	// Cyrillic 'а' (U+0430) — a classic IDN homograph attack.
+	cases := []string{
+		"paypa1.com",        // digit '1' for 'l'
+		"paypaI.com",        // capital 'I' for 'l'
+		"paypall.com",       // inserted letter (edit distance 1)
+		"payppal.com",       // doubled letter (edit distance 1)
+		"xn--pypal-4ve.com", // punycode Cyrillic homograph
+	}
+
+	for _, domain := range cases {
+		r := d.Analyze(domain)
+		if !r.IsSuspicious {
+			t.Errorf("typosquat %q not flagged", domain)
+			continue
+		}
+		if r.DetectionMethod != "typosquat" {
+			t.Errorf("typosquat %q: expected method typosquat, got %s", domain, r.DetectionMethod)
+		}
+		if r.Block {
+			t.Errorf("typosquat %q: expected flag-only (Block=false) in default mode", domain)
+		}
+	}
+}
+
+func TestDetector_Typosquat_ExactBrandNotFlagged(t *testing.T) {
+	d := NewDetectorWithBrands([]string{"paypal.com"})
+
+	// The exact brand and its subdomains must never be flagged as typosquat.
+	for _, domain := range []string{"paypal.com", "www.paypal.com", "api.paypal.com"} {
+		r := d.Analyze(domain)
+		if r.IsSuspicious && r.DetectionMethod == "typosquat" {
+			t.Errorf("exact brand %q flagged as typosquat: %s", domain, r.Reason)
+		}
+	}
+}
+
+func TestDetector_Typosquat_UnrelatedNotFlagged(t *testing.T) {
+	d := NewDetectorWithBrands([]string{"paypal.com"})
+
+	for _, domain := range []string{"google.com", "example.com", "github.com", "amazon.com"} {
+		r := d.Analyze(domain)
+		if r.IsSuspicious && r.DetectionMethod == "typosquat" {
+			t.Errorf("unrelated domain %q flagged as typosquat: %s", domain, r.Reason)
+		}
+	}
+}
+
+func TestDetector_Typosquat_EmptyWatchlistOff(t *testing.T) {
+	// Default detector has no brands => typosquat detection is OFF.
+	d := NewDetector()
+	for _, domain := range []string{"paypa1.com", "paypaI.com", "xn--pypal-4ve.com"} {
+		r := d.Analyze(domain)
+		if r.DetectionMethod == "typosquat" {
+			t.Errorf("empty watchlist should not run typosquat, but %q was flagged", domain)
+		}
+	}
+
+	// Explicit empty/blank list is also OFF.
+	d2 := NewDetectorWithBrands([]string{"", "  "})
+	if r := d2.Analyze("paypa1.com"); r.DetectionMethod == "typosquat" {
+		t.Error("blank watchlist entries should be ignored (feature OFF)")
+	}
+}
+
+func TestDetector_Typosquat_BlockVsFlag(t *testing.T) {
+	// Flag mode (default): suspicious but not marked to block.
+	flag := NewDetectorWithBrands([]string{"paypal.com"})
+	if r := flag.Analyze("paypa1.com"); !r.IsSuspicious || r.Block {
+		t.Errorf("flag mode: want suspicious && !Block, got suspicious=%v block=%v", r.IsSuspicious, r.Block)
+	}
+
+	// Block mode: same hit, but marked to block.
+	block := NewDetectorWithBrands([]string{"paypal.com"})
+	block.SetTyposquatBlock(true)
+	if r := block.Analyze("paypa1.com"); !r.IsSuspicious || !r.Block {
+		t.Errorf("block mode: want suspicious && Block, got suspicious=%v block=%v", r.IsSuspicious, r.Block)
+	}
+	// Block mode must not affect non-typosquat traffic.
+	if r := block.Analyze("google.com"); r.IsSuspicious {
+		t.Errorf("block mode: unrelated domain flagged: %s", r.Reason)
+	}
+}
+
 func TestShannonEntropy(t *testing.T) {
 	// "aaaa" has 0 entropy
 	e := shannonEntropy("aaaa")
