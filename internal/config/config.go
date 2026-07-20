@@ -45,6 +45,11 @@ type DataPlaneConfig struct {
 	// ClientRateLimitPerSec caps DNS queries accepted per client IP each second.
 	// 0 (the default) disables rate limiting entirely.
 	ClientRateLimitPerSec int `yaml:"client_rate_limit_per_sec"`
+
+	// SafeSearch, when true, rewrites well-known search/video hosts to their
+	// enforced-safe CNAME targets (Google/Bing/DuckDuckGo SafeSearch and
+	// YouTube Restricted Mode). Default false = no rewrite.
+	SafeSearch bool `yaml:"safe_search"`
 }
 
 type ControlPlaneConfig struct {
@@ -121,6 +126,11 @@ var DefaultConfig = func() *Config {
 			cfg.DataPlane.ClientRateLimitPerSec = n
 		} else {
 			logger.Log.Warnf("Invalid CLIENT_RATE_LIMIT_PER_SEC=%q, ignoring: %v", v, err)
+		}
+	}
+	if v := os.Getenv("SAFE_SEARCH"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.DataPlane.SafeSearch = b
 		}
 	}
 	return cfg
