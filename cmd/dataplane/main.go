@@ -19,6 +19,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/heartbeat"
 	"github.com/lopster568/phantomDNS/internal/logger"
 	"github.com/lopster568/phantomDNS/internal/metrics/promexport"
+	"github.com/lopster568/phantomDNS/internal/nrd"
 	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/db"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
@@ -176,6 +177,22 @@ func main() {
 		DBPath:   dbPath,
 	}, engine.Metrics(), engine, repos.Blocklist)
 	hb.Start(context.Background())
+
+	// 6d. Newly-registered-domain (NRD) feed — inert unless NRD_FEED_URL is set.
+	// Kept separate from user blocklists; refreshed periodically like blocklists.
+	nrdCfg := nrd.Config{
+		FeedURL: config.DefaultConfig.DataPlane.NRDFeedURL,
+		Block:   config.DefaultConfig.DataPlane.NRDBlock,
+	}
+	if iv, err := time.ParseDuration(config.DefaultConfig.DataPlane.NRDRefreshInterval); err == nil && iv > 0 {
+		nrdCfg.RefreshInterval = iv
+	}
+	nrdChecker := nrd.New(nrdCfg)
+	if nrdChecker.Enabled() {
+		logger.Log.Infof("NRD feed enabled (block=%v): %s", nrdCfg.Block, nrdCfg.FeedURL)
+		go nrdChecker.Run(context.Background())
+	}
+	engine.AttachNRDChecker(nrdChecker)
 
 	// 7. Attach blocklist checker and start DNS server
 	engine.AttachBlocklistChecker(repos.Blocklist)

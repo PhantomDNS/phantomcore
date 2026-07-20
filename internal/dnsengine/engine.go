@@ -30,6 +30,17 @@ type upstreamExchanger interface {
 	Close()
 }
 
+// NRDChecker reports whether a domain appears on the operator-configured
+// newly-registered-domain (NRD) feed, and whether matches should be blocked or
+// merely flagged. It is kept entirely separate from user blocklists. A nil
+// checker (or one with no feed loaded) is inert.
+type NRDChecker interface {
+	// IsListed reports whether the domain or its registrable parent is on the feed.
+	IsListed(domain string) bool
+	// BlockMode reports whether listed domains are blocked (true) or flagged (false).
+	BlockMode() bool
+}
+
 type RuntimeState struct {
 	acceptQueries atomic.Bool
 	// policyEnabled atomic.Bool
@@ -40,6 +51,7 @@ type Engine struct {
 	upstreamManager upstreamExchanger
 	policyEngine    *policy.Engine
 	blocklist       BlocklistChecker
+	nrd             NRDChecker
 	state           *RuntimeState
 	metrics         *metrics.QueryMetrics
 	queryLog        repositories.QueryLogRepository
@@ -116,6 +128,12 @@ func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
 // (the default) leaves the engine's allow path unchanged and adds no overhead.
 func (e *Engine) AttachGeoFilter(f *geoip.Filter) {
 	e.geo = f
+}
+
+// AttachNRDChecker wires the newly-registered-domain feed checker onto the
+// engine. Passing a checker with no feed configured leaves NRD inert.
+func (e *Engine) AttachNRDChecker(n NRDChecker) {
+	e.nrd = n
 }
 
 func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *policy.Engine) (*Engine, error) {
@@ -539,6 +557,23 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
+	// --- Step 1.5: Newly-registered-domain (NRD) feed ---
+	// The NRD set is kept entirely separate from user blocklists. In block mode a
+	// match is treated like a blocklist hit and short-circuits here; in flag mode
+	// the query continues and is flagged on the allow path below. Inert when no
+	// feed is configured.
+	nrdListed := false
+	if e.nrd != nil {
+		nrdListed = e.nrd.IsListed(domainName)
+		if nrdListed && e.nrd.BlockMode() {
+			logger.Log.Infof("Blocked by NRD feed: %s", domainName)
+			e.logQuery(domainName, clientIP, "block", "nrd", threatResult)
+			e.respondBlocked(w, r, domainName, "nrd")
+			success = true
+			return
+		}
+	}
+
 	// --- Step 2: Evaluate policy ---
 	decision, err := e.policyEngine.Evaluate(domainName)
 	if err != nil {
@@ -640,6 +675,14 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 			action = "flagged"
 			reason = threatResult.DetectionMethod
 			logger.Log.Warnf("Suspicious domain allowed: %s (score=%.2f, method=%s)", domainName, threatResult.ThreatScore, threatResult.DetectionMethod)
+		} else if nrdListed {
+			// Flag mode: forward the query but mark it as newly-registered.
+			threatResult.IsSuspicious = true
+			threatResult.DetectionMethod = "nrd"
+			threatResult.Reason = "newly-registered domain (on NRD feed)"
+			action = "flagged"
+			reason = threatResult.DetectionMethod
+			logger.Log.Warnf("Newly-registered domain allowed (flagged): %s", domainName)
 		}
 		// Forward first so the fast-flux heuristic and the optional GeoIP filter
 		// can inspect the answer, then log — a tripped domain is flagged/blocked
