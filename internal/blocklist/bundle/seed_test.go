@@ -47,7 +47,9 @@ func (m *mockBlocklistRepo) GetSource(string) (*models.BlocklistSource, error) {
 	return nil, nil
 }
 func (m *mockBlocklistRepo) CreateSource(*models.BlocklistSource) error { return nil }
+func (m *mockBlocklistRepo) UpdateSource(*models.BlocklistSource) error { return nil }
 func (m *mockBlocklistRepo) DeleteSource(string) error                  { return nil }
+func (m *mockBlocklistRepo) DeleteEntriesBySource(string) error         { return nil }
 func (m *mockBlocklistRepo) CountEntriesBySource(string) (int64, error) {
 	return 0, nil
 }
