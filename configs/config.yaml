@@ -6,6 +6,11 @@ dataplane:
   anonymization:
     secret: "${PHANTOM_ANON_SECRET:-change-me-in-production}"
   blocklist_update_interval: "6h"
+  # Optional DNSSEC validation of upstream answers. Default false (off): resolution
+  # behaviour is unchanged unless enabled. When true, the DO bit is set on upstream
+  # queries and RRSIG signatures over answer RRsets are validated; answers that fail
+  # (BOGUS) return SERVFAIL, unsigned/insecure zones pass through. Env: DNSSEC_VALIDATION.
+  dnssec_validation: false
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"
