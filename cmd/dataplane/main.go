@@ -20,6 +20,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/storage/db"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
+	"github.com/lopster568/phantomDNS/internal/watchdog"
 )
 
 func main() {
@@ -139,6 +140,14 @@ func main() {
 		logger.Log.Fatal("Failed to create server: " + err.Error())
 	}
 
+	// 8. Self-heal watchdog — supervise dataplane liveness on unattended boxes.
+	// Probe: the engine must be accepting queries. Recovery: an in-process
+	// listener restart is not safely in scope from here (the DNS server owns its
+	// own bind/shutdown lifecycle), so we emit a critical log line instead; the
+	// systemd unit (deploy/hydradns.service, Restart=always) handles bare-metal
+	// process-level recovery when the box is truly wedged.
+	startWatchdog(engine)
+
 	logger.Log.Infof("DNS server listening on %s", config.DefaultConfig.DataPlane.ListenAddr)
 	srv.Run()
 }
@@ -159,6 +168,42 @@ func healthInterval(v string) time.Duration {
 		return time.Hour
 	}
 	return d
+}
+
+// startWatchdog constructs and launches the self-heal watchdog for the DNS
+// engine. It is a no-op when WATCHDOG_INTERVAL disables it. The watchdog is
+// started in a background goroutine that first waits for the DNS server to come
+// up, so the normal startup window is not flagged as unhealthy.
+func startWatchdog(engine *dnsengine.Engine) {
+	wd := watchdog.New(
+		watchdog.Config{
+			Interval:         config.DefaultConfig.DataPlane.WatchdogIntervalDuration(),
+			FailureThreshold: config.DefaultConfig.DataPlane.WatchdogFailureThreshold,
+		},
+		// Liveness probe: engine is healthy while it is accepting queries.
+		func() bool { return engine.Status().AcceptingQueries },
+		// Recovery: log critically for external supervision. Restarting the DNS
+		// listener in-process is not safely in scope here; deploy/hydradns.service
+		// (Restart=always) provides bare-metal auto-restart for hard failures.
+		func() {
+			logger.Log.Error("watchdog: dataplane stalled (engine not accepting queries); " +
+				"relying on systemd Restart=always for bare-metal recovery")
+		},
+		logger.Log,
+	)
+
+	if !wd.Enabled() {
+		logger.Log.Info("Self-heal watchdog disabled (WATCHDOG_INTERVAL off)")
+		return
+	}
+
+	go func() {
+		// Wait for the server to start accepting queries before supervising.
+		for !engine.Status().AcceptingQueries {
+			time.Sleep(500 * time.Millisecond)
+		}
+		wd.Start(context.Background())
+	}()
 }
 
 func refreshBlocklists(ctx context.Context, engine *blocklist.Engine, repo repositories.BlocklistRepository) {

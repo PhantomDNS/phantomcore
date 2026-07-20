@@ -27,6 +27,11 @@ dataplane:
   dns_0x20: false
   # Address for the Prometheus /metrics endpoint (defaults to 0.0.0.0:9153).
   metrics_addr: "0.0.0.0:9153"
+  # Self-heal watchdog: probe cadence and consecutive-failure threshold before
+  # recovery. Set watchdog_interval to "off" or "0" to disable. Overridable via
+  # WATCHDOG_INTERVAL / WATCHDOG_FAILURE_THRESHOLD env vars.
+  watchdog_interval: "30s"
+  watchdog_failure_threshold: 3
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"
