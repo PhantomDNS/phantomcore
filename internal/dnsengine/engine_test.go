@@ -430,6 +430,97 @@ func TestShouldEnforceThreat(t *testing.T) {
 	}
 }
 
+// mustRR builds a dns.RR from its zone-file string form or fails the test.
+func mustRR(t *testing.T, s string) dns.RR {
+	t.Helper()
+	rr, err := dns.NewRR(s)
+	if err != nil {
+		t.Fatalf("failed to build RR %q: %v", s, err)
+	}
+	return rr
+}
+
+// TestFilterRebind_SingleRecord classifies one record at a time: private,
+// loopback, link-local (unicast + multicast), and unspecified addresses must be
+// dropped, while genuine public addresses must be kept — for both A and AAAA.
+func TestFilterRebind_SingleRecord(t *testing.T) {
+	tests := []struct {
+		name     string
+		rr       string
+		wantDrop bool
+	}{
+		// Private IPv4 (RFC 1918)
+		{"private-10", "example.com. 300 IN A 10.0.0.1", true},
+		{"private-172", "example.com. 300 IN A 172.16.5.4", true},
+		{"private-192", "example.com. 300 IN A 192.168.1.1", true},
+		// Loopback
+		{"loopback-v4", "example.com. 300 IN A 127.0.0.1", true},
+		{"loopback-v6", "example.com. 300 IN AAAA ::1", true},
+		// Link-local unicast
+		{"linklocal-v4", "example.com. 300 IN A 169.254.1.1", true},
+		{"linklocal-v6", "example.com. 300 IN AAAA fe80::1", true},
+		// Link-local multicast
+		{"llmulticast-v4", "example.com. 300 IN A 224.0.0.251", true},
+		{"llmulticast-v6", "example.com. 300 IN AAAA ff02::1", true},
+		// Unspecified
+		{"unspecified-v4", "example.com. 300 IN A 0.0.0.0", true},
+		{"unspecified-v6", "example.com. 300 IN AAAA ::", true},
+		// Private IPv6 (ULA fc00::/7)
+		{"ula-v6", "example.com. 300 IN AAAA fc00::1", true},
+		// Public — kept
+		{"public-v4-google", "example.com. 300 IN A 8.8.8.8", false},
+		{"public-v4-cf", "example.com. 300 IN A 1.1.1.1", false},
+		{"public-v6-cf", "example.com. 300 IN AAAA 2606:4700:4700::1111", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kept, dropped := filterRebind([]dns.RR{mustRR(t, tt.rr)})
+			if tt.wantDrop {
+				if dropped != 1 || len(kept) != 0 {
+					t.Errorf("%s: expected dropped=1 kept=0, got dropped=%d kept=%d", tt.rr, dropped, len(kept))
+				}
+			} else {
+				if dropped != 0 || len(kept) != 1 {
+					t.Errorf("%s: expected dropped=0 kept=1, got dropped=%d kept=%d", tt.rr, dropped, len(kept))
+				}
+			}
+		})
+	}
+}
+
+// TestFilterRebind_Mixed verifies a mixed answer set keeps only the public
+// records and reports the correct drop count.
+func TestFilterRebind_Mixed(t *testing.T) {
+	answers := []dns.RR{
+		mustRR(t, "example.com. 300 IN A 8.8.8.8"),                 // public, keep
+		mustRR(t, "example.com. 300 IN A 192.168.1.1"),             // private, drop
+		mustRR(t, "example.com. 300 IN AAAA 2606:4700:4700::1111"), // public, keep
+		mustRR(t, "example.com. 300 IN AAAA ::1"),                  // loopback, drop
+		mustRR(t, "example.com. 300 IN A 127.0.0.1"),               // loopback, drop
+	}
+	kept, dropped := filterRebind(answers)
+	if dropped != 3 {
+		t.Errorf("expected 3 dropped, got %d", dropped)
+	}
+	if len(kept) != 2 {
+		t.Fatalf("expected 2 kept, got %d", len(kept))
+	}
+	for _, rr := range kept {
+		switch v := rr.(type) {
+		case *dns.A:
+			if v.A.String() != "8.8.8.8" {
+				t.Errorf("unexpected A kept: %s", v.A.String())
+			}
+		case *dns.AAAA:
+			if v.AAAA.String() != "2606:4700:4700::1111" {
+				t.Errorf("unexpected AAAA kept: %s", v.AAAA.String())
+			}
+		default:
+			t.Errorf("unexpected record type kept: %T", rr)
+		}
+	}
+}
+
 func TestThreatDecision(t *testing.T) {
 	sus := threat.Result{IsSuspicious: true, ThreatScore: 0.9}
 
@@ -476,5 +567,58 @@ func TestProcessDNSQuery_ThreatBlockDisabledByDefault(t *testing.T) {
 	}
 	if got := e.threatDecision(sus); got != threatNone {
 		t.Errorf("default threshold (0) must not enforce, got %v", got)
+	}
+}
+
+// TestFilterRebind_NonAddressRecordsUntouched ensures records that are not
+// A/AAAA (CNAME, MX, TXT) are always preserved, even alongside dropped IPs.
+func TestFilterRebind_NonAddressRecordsUntouched(t *testing.T) {
+	answers := []dns.RR{
+		mustRR(t, "example.com. 300 IN CNAME target.example.net."),
+		mustRR(t, "example.com. 300 IN MX 10 mail.example.net."),
+		mustRR(t, "example.com. 300 IN TXT \"v=spf1 -all\""),
+		mustRR(t, "example.com. 300 IN A 10.0.0.1"), // private, drop
+	}
+	kept, dropped := filterRebind(answers)
+	if dropped != 1 {
+		t.Errorf("expected 1 dropped, got %d", dropped)
+	}
+	if len(kept) != 3 {
+		t.Fatalf("expected 3 non-address records kept, got %d", len(kept))
+	}
+	for _, rr := range kept {
+		switch rr.(type) {
+		case *dns.A, *dns.AAAA:
+			t.Errorf("no address record should survive, got %T", rr)
+		}
+	}
+}
+
+// TestFilterRebind_AllPublicUnchanged verifies a fully public answer set is
+// passed through untouched with zero drops.
+func TestFilterRebind_AllPublicUnchanged(t *testing.T) {
+	answers := []dns.RR{
+		mustRR(t, "example.com. 300 IN A 8.8.8.8"),
+		mustRR(t, "example.com. 300 IN A 1.1.1.1"),
+		mustRR(t, "example.com. 300 IN AAAA 2001:4860:4860::8888"),
+	}
+	kept, dropped := filterRebind(answers)
+	if dropped != 0 {
+		t.Errorf("expected 0 dropped, got %d", dropped)
+	}
+	if len(kept) != len(answers) {
+		t.Errorf("expected all %d records kept, got %d", len(answers), len(kept))
+	}
+}
+
+// TestFilterRebind_Empty verifies the empty/nil-input edge cases.
+func TestFilterRebind_Empty(t *testing.T) {
+	kept, dropped := filterRebind(nil)
+	if dropped != 0 || len(kept) != 0 {
+		t.Errorf("expected empty result for nil input, got dropped=%d kept=%d", dropped, len(kept))
+	}
+	kept, dropped = filterRebind([]dns.RR{})
+	if dropped != 0 || len(kept) != 0 {
+		t.Errorf("expected empty result for empty input, got dropped=%d kept=%d", dropped, len(kept))
 	}
 }

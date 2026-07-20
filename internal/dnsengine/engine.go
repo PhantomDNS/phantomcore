@@ -2,6 +2,7 @@
 package dnsengine
 
 import (
+	"net"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -45,6 +46,10 @@ type Engine struct {
 	// abusedTLDs is the set of high-abuse TLDs to block on the default allow
 	// path (lowercased, no leading dot). Empty/nil disables the feature.
 	abusedTLDs map[string]bool
+
+	// rebindProtection, when true, strips A/AAAA answers that resolve a public
+	// name to a private/loopback/link-local IP. Default false (unchanged behaviour).
+	rebindProtection bool
 }
 
 func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
@@ -85,6 +90,7 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		threatBlockThreshold: cfg.ThreatBlockThreshold,
 		threatBlockDryRun:    cfg.ThreatBlockDryRun,
 		abusedTLDs:           abusedTLDs,
+		rebindProtection:     cfg.RebindProtection,
 	}, nil
 }
 
@@ -153,6 +159,33 @@ func (e *Engine) respondRedirect(w dns.ResponseWriter, r *dns.Msg, domain, ip st
 	}
 }
 
+// filterRebind removes A/AAAA answer records whose IP is private, loopback,
+// link-local, or unspecified. This defends against DNS rebinding, where a
+// public name is resolved to an internal address to reach services behind the
+// resolver. Non-A/AAAA records are always kept. It is a pure function: it
+// returns the surviving records and the number that were dropped.
+func filterRebind(answers []dns.RR) (kept []dns.RR, dropped int) {
+	for _, rr := range answers {
+		var ip net.IP
+		switch v := rr.(type) {
+		case *dns.A:
+			ip = v.A
+		case *dns.AAAA:
+			ip = v.AAAA
+		default:
+			kept = append(kept, rr)
+			continue
+		}
+		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
+			ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			dropped++
+			continue
+		}
+		kept = append(kept, rr)
+	}
+	return kept, dropped
+}
+
 func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) {
 	resp, err := e.upstreamManager.Exchange(r, 5, 2)
 	if err != nil {
@@ -169,6 +202,23 @@ func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string
 		_ = w.WriteMsg(m)
 		return
 	}
+
+	// DNS rebinding protection: strip answers that map a public name to an
+	// internal IP. If dropping them leaves an A/AAAA query with no answers at
+	// all, block the response outright instead of returning an empty reply.
+	if e.rebindProtection {
+		kept, dropped := filterRebind(resp.Answer)
+		if dropped > 0 {
+			logger.Log.Warnf("Rebind protection dropped %d record(s) for %s", dropped, domain)
+			resp.Answer = kept
+			qtype := r.Question[0].Qtype
+			if len(kept) == 0 && (qtype == dns.TypeA || qtype == dns.TypeAAAA) {
+				e.respondBlocked(w, r, domain, "rebind")
+				return
+			}
+		}
+	}
+
 	if err := w.WriteMsg(resp); err != nil {
 		logger.Log.Error("Failed to write DNS response: " + err.Error())
 	}
