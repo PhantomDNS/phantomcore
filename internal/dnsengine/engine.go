@@ -41,6 +41,10 @@ type Engine struct {
 	// is blocked. threatBlockDryRun logs a would-be block instead of blocking.
 	threatBlockThreshold float64
 	threatBlockDryRun    bool
+
+	// abusedTLDs is the set of high-abuse TLDs to block on the default allow
+	// path (lowercased, no leading dot). Empty/nil disables the feature.
+	abusedTLDs map[string]bool
 }
 
 func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
@@ -56,6 +60,20 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 	if err != nil {
 		return nil, err
 	}
+
+	// Build the abused-TLD set once so the hot path does a plain map lookup
+	// instead of scanning a slice or reading globals.
+	var abusedTLDs map[string]bool
+	if len(cfg.AbusedTLDs) > 0 {
+		abusedTLDs = make(map[string]bool, len(cfg.AbusedTLDs))
+		for _, t := range cfg.AbusedTLDs {
+			t = strings.ToLower(strings.TrimSpace(t))
+			if t != "" {
+				abusedTLDs[t] = true
+			}
+		}
+	}
+
 	return &Engine{
 		upstreamManager:      mgr,
 		policyEngine:         pE,
@@ -66,7 +84,22 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		threatDetector:       threat.NewDetector(),
 		threatBlockThreshold: cfg.ThreatBlockThreshold,
 		threatBlockDryRun:    cfg.ThreatBlockDryRun,
+		abusedTLDs:           abusedTLDs,
 	}, nil
+}
+
+// isAbusedTLD reports whether the domain's final label (TLD) is in the
+// configured high-abuse set. Returns false when the set is empty (feature off).
+// domain is expected to be already normalized (lowercased, no trailing dot).
+func (e *Engine) isAbusedTLD(domain string) bool {
+	if len(e.abusedTLDs) == 0 {
+		return false
+	}
+	tld := domain
+	if i := strings.LastIndex(domain, "."); i >= 0 {
+		tld = domain[i+1:]
+	}
+	return e.abusedTLDs[strings.ToLower(tld)]
 }
 
 func (e *Engine) SetAcceptQueries(enabled bool) {
@@ -294,6 +327,16 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 				domainName, threatResult.ThreatScore, e.threatBlockThreshold, threatResult.DetectionMethod)
 		}
 
+		// Abused-TLD block applies only on the default allow path (no explicit
+		// policy matched). An explicit ALLOW policy, which carries a PolicyID,
+		// still wins and is forwarded normally.
+		if decision.PolicyID == "" && e.isAbusedTLD(domainName) {
+			logger.Log.Infof("Blocking via abused TLD: %s", domainName)
+			e.logQuery(domainName, clientIP, "block", threatResult)
+			e.respondBlocked(w, r, domainName, "abused-tld")
+			success = true
+			return
+		}
 		action := "allow"
 		if threatResult.IsSuspicious {
 			action = "flagged"

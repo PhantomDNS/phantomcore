@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/lopster568/phantomDNS/internal/logger"
 	"gopkg.in/yaml.v3"
@@ -32,6 +33,10 @@ type DataPlaneConfig struct {
 	ThreatBlockThreshold float64 `yaml:"threat_block_threshold"`
 	// ThreatBlockDryRun logs would-be threat blocks without actually blocking.
 	ThreatBlockDryRun bool `yaml:"threat_block_dryrun"`
+
+	// AbusedTLDs is the set of high-abuse TLDs (e.g. "zip", "mov", "top") to
+	// block on the default allow path. Empty (the default) disables the feature.
+	AbusedTLDs []string `yaml:"abused_tlds"`
 }
 
 type ControlPlaneConfig struct {
@@ -93,8 +98,25 @@ var DefaultConfig = func() *Config {
 			logger.Log.Warnf("Invalid THREAT_BLOCK_DRYRUN %q, ignoring: %v", v, err)
 		}
 	}
+	if v := os.Getenv("ABUSED_TLDS"); v != "" {
+		cfg.DataPlane.AbusedTLDs = parseAbusedTLDs(v)
+	}
 	return cfg
 }()
+
+// parseAbusedTLDs splits a comma-separated env value into a normalized list of
+// TLDs: split on ",", trim surrounding spaces, lowercase, and drop empties.
+func parseAbusedTLDs(v string) []string {
+	parts := strings.Split(v, ",")
+	tlds := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p != "" {
+			tlds = append(tlds, p)
+		}
+	}
+	return tlds
+}
 
 func configPath() string {
 	if p := os.Getenv("PHANTOM_CONFIG"); p != "" {

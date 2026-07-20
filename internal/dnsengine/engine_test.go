@@ -325,6 +325,77 @@ func TestEngineStatus_WithError(t *testing.T) {
 	}
 }
 
+func TestProcessDNSQuery_AbusedTLDBlocks(t *testing.T) {
+	// TLD in the configured set is blocked on the default allow path.
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.abusedTLDs = map[string]bool{"zip": true, "mov": true}
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("malware.zip"))
+
+	if w.msg == nil {
+		t.Fatal("expected response for abused-TLD domain")
+	}
+	if !isBlockedResponse(w.msg) {
+		t.Errorf("expected blocked (0.0.0.0) for abused TLD, got rcode %d", w.msg.Rcode)
+	}
+}
+
+func TestProcessDNSQuery_AbusedTLDNotInSetAllowed(t *testing.T) {
+	// TLD not in the set reaches the allow path (no block).
+	// Empty (pool-less) upstream manager returns SERVFAIL without a network call.
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.abusedTLDs = map[string]bool{"zip": true}
+	e.upstreamManager = &UpstreamManager{}
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("example.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected response for allowed domain")
+	}
+	if isBlockedResponse(w.msg) {
+		t.Error("expected non-abused TLD to reach allow path, but it was blocked")
+	}
+}
+
+func TestProcessDNSQuery_AbusedTLDEmptySetIsOff(t *testing.T) {
+	// Empty set = feature off: a .zip domain must not be blocked.
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	// abusedTLDs left nil (empty).
+	e.upstreamManager = &UpstreamManager{}
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("example.zip"))
+
+	if w.msg == nil {
+		t.Fatal("expected response when abused-TLD feature is off")
+	}
+	if isBlockedResponse(w.msg) {
+		t.Error("expected no block with empty abused-TLD set, but domain was blocked")
+	}
+}
+
+func TestProcessDNSQuery_AbusedTLDAllowPolicyOverrides(t *testing.T) {
+	// An explicit ALLOW policy for the domain must win over the TLD block.
+	policies := []policy.Policy{
+		{ID: "allow-trusted", Action: "ALLOW", Priority: 100, Domains: []string{"trusted.zip"}},
+	}
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, policies)
+	e.abusedTLDs = map[string]bool{"zip": true}
+	e.upstreamManager = &UpstreamManager{}
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("trusted.zip"))
+
+	if w.msg == nil {
+		t.Fatal("expected response for explicitly-allowed abused-TLD domain")
+	}
+	if isBlockedResponse(w.msg) {
+		t.Error("expected explicit ALLOW policy to override abused-TLD block, but domain was blocked")
+	}
+}
+
 func TestSetAcceptQueries(t *testing.T) {
 	e := newTestEngine(nil, nil)
 
