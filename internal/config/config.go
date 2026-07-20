@@ -25,6 +25,7 @@ type DataPlaneConfig struct {
 	UpstreamResolvers       []string         `yaml:"upstream_resolvers"`
 	GRPCServer              GRPCServerConfig `yaml:"grpc_server"`
 	BlocklistUpdateInterval string           `yaml:"blocklist_update_interval"`
+	MetricsAddr             string           `yaml:"metrics_addr"`
 
 	// ThreatBlockThreshold enables enforcement of the heuristic threat detector.
 	// When > 0, a query scored suspicious with ThreatScore >= threshold is blocked
@@ -66,6 +67,7 @@ func defaultConfig() *Config {
 			ListenAddr:              "0.0.0.0:1053",
 			UpstreamResolvers:       []string{"8.8.8.8:53", "1.1.1.1:53"},
 			BlocklistUpdateInterval: "6h",
+			MetricsAddr:             "0.0.0.0:9153",
 			GRPCServer: GRPCServerConfig{
 				Port:       50051,
 				ListenAddr: "localhost:50051",
@@ -143,6 +145,13 @@ var DefaultConfig = func() *Config {
 		} else {
 			logger.Log.Warnf("Invalid DNS_0X20 value %q, ignoring", v)
 		}
+	}
+	if addr := os.Getenv("METRICS_LISTEN_ADDR"); addr != "" {
+		cfg.DataPlane.MetricsAddr = addr
+	}
+	// Fall back to a sane default when a config file omits metrics_addr.
+	if cfg.DataPlane.MetricsAddr == "" {
+		cfg.DataPlane.MetricsAddr = "0.0.0.0:9153"
 	}
 	return cfg
 }()
