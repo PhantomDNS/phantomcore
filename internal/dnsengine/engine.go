@@ -35,6 +35,9 @@ type Engine struct {
 	queryLog        repositories.QueryLogRepository
 	statistics      repositories.StatisticsRepository
 	threatDetector  *threat.Detector
+	// dnssecEnabled turns on optional DNSSEC validation of upstream answers.
+	// Default false — resolution behaviour is unchanged unless an operator opts in.
+	dnssecEnabled bool
 }
 
 func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
@@ -50,6 +53,9 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 	if err != nil {
 		return nil, err
 	}
+	if cfg.DNSSECValidation {
+		logger.Log.Info("DNSSEC validation enabled (answer-RRset RRSIG validation)")
+	}
 	return &Engine{
 		upstreamManager: mgr,
 		policyEngine:    pE,
@@ -58,6 +64,7 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		queryLog:        repos.QueryLogs,
 		statistics:      repos.Statistics,
 		threatDetector:  threat.NewDetector(),
+		dnssecEnabled:   cfg.DNSSECValidation,
 	}, nil
 }
 
@@ -113,6 +120,12 @@ func (e *Engine) respondRedirect(w dns.ResponseWriter, r *dns.Msg, domain, ip st
 }
 
 func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) {
+	// When DNSSEC validation is enabled, request signatures from the upstream by
+	// setting the DO bit. This is a no-op on the query path when disabled.
+	if e.dnssecEnabled {
+		setDO(r)
+	}
+
 	resp, err := e.upstreamManager.Exchange(r, 5, 2)
 	if err != nil {
 		logger.Log.Error("Upstream query failed: " + err.Error())
@@ -128,9 +141,39 @@ func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string
 		_ = w.WriteMsg(m)
 		return
 	}
+
+	// Validate signed answers. Only BOGUS (signatures present but failing) is
+	// rejected; INSECURE (unsigned) and SECURE both pass through unchanged.
+	if e.dnssecEnabled {
+		if status := classifyResponse(resp, e.fetchDNSKEYs, time.Now()); status == StatusBogus {
+			logger.Log.Warnf("DNSSEC validation BOGUS for %s → SERVFAIL", domain)
+			m := new(dns.Msg)
+			m.SetRcode(r, dns.RcodeServerFailure)
+			if err := w.WriteMsg(m); err != nil {
+				logger.Log.Error("Failed to write SERVFAIL response: " + err.Error())
+			}
+			return
+		}
+	}
 	if err := w.WriteMsg(resp); err != nil {
 		logger.Log.Error("Failed to write DNS response: " + err.Error())
 	}
+}
+
+// fetchDNSKEYs retrieves the DNSKEY RRset for a signer zone from the upstream
+// resolver (with the DO bit set). It satisfies the keyFetcher contract used by
+// classifyResponse. Note: the returned keys are used to validate answer RRSIGs but
+// are not themselves chained to the parent DS / root trust anchor (see dnssec.go
+// scope note) — that is a documented follow-up.
+func (e *Engine) fetchDNSKEYs(signer string) ([]*dns.DNSKEY, error) {
+	q := new(dns.Msg)
+	q.SetQuestion(dns.Fqdn(signer), dns.TypeDNSKEY)
+	setDO(q)
+	resp, err := e.upstreamManager.Exchange(q, 5, 2)
+	if err != nil {
+		return nil, err
+	}
+	return extractDNSKEYs(resp), nil
 }
 
 // normalizeDomain lowercases and strips the trailing dot from a DNS FQDN.

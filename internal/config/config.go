@@ -3,6 +3,7 @@ package config
 // SPDX-License-Identifier: GPL-3.0-or-later
 import (
 	"os"
+	"strconv"
 
 	"github.com/lopster568/phantomDNS/internal/logger"
 	"gopkg.in/yaml.v3"
@@ -23,6 +24,9 @@ type DataPlaneConfig struct {
 	UpstreamResolvers       []string         `yaml:"upstream_resolvers"`
 	GRPCServer              GRPCServerConfig `yaml:"grpc_server"`
 	BlocklistUpdateInterval string           `yaml:"blocklist_update_interval"`
+	// DNSSECValidation enables validation of RRSIG signatures over upstream answer
+	// RRsets. Default false (off): resolution behaviour is unchanged unless enabled.
+	DNSSECValidation bool `yaml:"dnssec_validation"`
 }
 
 type ControlPlaneConfig struct {
@@ -70,8 +74,22 @@ var DefaultConfig = func() *Config {
 	if interval := os.Getenv("BLOCKLIST_UPDATE_INTERVAL"); interval != "" {
 		cfg.DataPlane.BlocklistUpdateInterval = interval
 	}
+	if v := os.Getenv("DNSSEC_VALIDATION"); v != "" {
+		cfg.DataPlane.DNSSECValidation = parseBoolEnv(v, cfg.DataPlane.DNSSECValidation)
+	}
 	return cfg
 }()
+
+// parseBoolEnv parses a boolean environment variable, falling back to def on an
+// unparseable value (and logging a warning) rather than silently flipping a flag.
+func parseBoolEnv(v string, def bool) bool {
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		logger.Log.Warnf("invalid boolean env value %q, using %v", v, def)
+		return def
+	}
+	return b
+}
 
 func configPath() string {
 	if p := os.Getenv("PHANTOM_CONFIG"); p != "" {
