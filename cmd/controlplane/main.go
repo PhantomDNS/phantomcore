@@ -13,6 +13,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/inventory"
 	"github.com/lopster568/phantomDNS/internal/storage/db"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
+	"github.com/lopster568/phantomDNS/internal/tlsutil"
 
 	"github.com/gin-gonic/gin"
 )
@@ -58,5 +59,40 @@ func main() {
 	r.Use(middlewares.Auth(repos.Auth))
 
 	routes.RegisterRoutes(r, apiHandler)
-	r.Run(config.DefaultConfig.ControlPlane.ListenAddr)
+
+	serve(r, config.DefaultConfig.ControlPlane)
+}
+
+// serve starts the control-plane HTTP API, using TLS when configured. HTTP is
+// the default so existing deployments are unaffected. Public ACME cannot issue
+// certificates for private-LAN names, so TLS is served either from an
+// operator-provided cert/key pair or from a self-signed cert generated and
+// persisted on first boot.
+func serve(r *gin.Engine, cfg config.ControlPlaneConfig) {
+	addr := cfg.ListenAddr
+
+	switch cfg.TLS.Mode() {
+	case config.TLSModeProvided:
+		log.Printf("control-plane serving HTTPS on %s (operator-provided certificate)", addr)
+		if err := r.RunTLS(addr, cfg.TLS.CertFile, cfg.TLS.KeyFile); err != nil {
+			log.Fatalf("control-plane TLS server failed: %v", err)
+		}
+
+	case config.TLSModeSelfSigned:
+		hosts := tlsutil.HostsForListenAddr(addr)
+		certFile, keyFile, err := tlsutil.EnsureSelfSigned(cfg.TLS.SelfSignedDir, hosts)
+		if err != nil {
+			log.Fatalf("failed to prepare self-signed certificate: %v", err)
+		}
+		log.Printf("control-plane serving HTTPS on %s (self-signed certificate at %s)", addr, certFile)
+		if err := r.RunTLS(addr, certFile, keyFile); err != nil {
+			log.Fatalf("control-plane TLS server failed: %v", err)
+		}
+
+	default:
+		log.Printf("control-plane serving HTTP on %s (TLS disabled)", addr)
+		if err := r.Run(addr); err != nil {
+			log.Fatalf("control-plane server failed: %v", err)
+		}
+	}
 }
