@@ -357,7 +357,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 			logger.Log.Error("Blocklist check failed: " + err.Error())
 		} else if blocked {
 			logger.Log.Infof("Blocked by blocklist: %s", domainName)
-			e.logQuery(domainName, clientIP, "block", threatResult)
+			e.logQuery(domainName, clientIP, "block", "blocklist", threatResult)
 			e.respondBlocked(w, r, domainName, "blocklist")
 			success = true
 			return
@@ -368,7 +368,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 	decision, err := e.policyEngine.Evaluate(domainName)
 	if err != nil {
 		logger.Log.Error("Failed to evaluate policy: " + err.Error())
-		e.logQuery(domainName, clientIP, "error", threatResult)
+		e.logQuery(domainName, clientIP, "error", "", threatResult)
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeServerFailure)
 		_ = w.WriteMsg(m)
@@ -378,12 +378,12 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 	switch decision.Action {
 	case policy.ActionDeny:
 		logger.Log.Infof("Blocking via policy %s", decision.PolicyID)
-		e.logQuery(domainName, clientIP, "block", threatResult)
+		e.logQuery(domainName, clientIP, "block", decision.PolicyID, threatResult)
 		e.respondBlocked(w, r, domainName, decision.PolicyID)
 		success = true
 
 	case policy.ActionRedirect:
-		e.logQuery(domainName, clientIP, "redirect", threatResult)
+		e.logQuery(domainName, clientIP, "redirect", "redirect:"+decision.PolicyID, threatResult)
 		e.respondRedirect(w, r, domainName, decision.RedirectIP)
 		success = true
 
@@ -395,7 +395,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		case threatBlock:
 			logger.Log.Warnf("Blocking suspicious domain %s (score=%.2f >= %.2f, method=%s)",
 				domainName, threatResult.ThreatScore, e.threatBlockThreshold, threatResult.DetectionMethod)
-			e.logQuery(domainName, clientIP, "block", threatResult)
+			e.logQuery(domainName, clientIP, "block", "threat:"+threatResult.DetectionMethod, threatResult)
 			e.respondBlocked(w, r, domainName, "threat:"+threatResult.DetectionMethod)
 			success = true
 			return
@@ -409,23 +409,25 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		// still wins and is forwarded normally.
 		if decision.PolicyID == "" && e.isAbusedTLD(domainName) {
 			logger.Log.Infof("Blocking via abused TLD: %s", domainName)
-			e.logQuery(domainName, clientIP, "block", threatResult)
+			e.logQuery(domainName, clientIP, "block", "abused-tld", threatResult)
 			e.respondBlocked(w, r, domainName, "abused-tld")
 			success = true
 			return
 		}
 		action := "allow"
+		reason := ""
 		if threatResult.IsSuspicious {
 			action = "flagged"
+			reason = threatResult.DetectionMethod
 			logger.Log.Warnf("Suspicious domain allowed: %s (score=%.2f, method=%s)", domainName, threatResult.ThreatScore, threatResult.DetectionMethod)
 		}
-		e.logQuery(domainName, clientIP, action, threatResult)
+		e.logQuery(domainName, clientIP, action, reason, threatResult)
 		e.forwardUpstream(w, r, domainName)
 		success = true
 	}
 }
 
-func (e *Engine) logQuery(domain, clientIP, action string, tr threat.Result) {
+func (e *Engine) logQuery(domain, clientIP, action, reason string, tr threat.Result) {
 	if e.queryLog == nil {
 		return
 	}
@@ -433,6 +435,7 @@ func (e *Engine) logQuery(domain, clientIP, action string, tr threat.Result) {
 		Domain:          domain,
 		ClientIP:        clientIP,
 		Action:          action,
+		BlockReason:     reason,
 		IsSuspicious:    tr.IsSuspicious,
 		ThreatScore:     tr.ThreatScore,
 		DetectionMethod: tr.DetectionMethod,
