@@ -69,5 +69,11 @@ func ValidatePolicy(p *Policy) error {
 			return fmt.Errorf("empty domain in policy %s", p.ID)
 		}
 	}
+	// Validate the optional schedule (I-038): timezone, day names, and time
+	// window are all checked here so a malformed schedule is rejected before it
+	// is persisted or loaded into the engine.
+	if _, err := compileSchedule(p); err != nil {
+		return fmt.Errorf("policy %s: %v", p.ID, err)
+	}
 	return nil
 }

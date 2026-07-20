@@ -3,14 +3,29 @@ package policy
 import (
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 type Engine struct {
 	snapshot atomic.Value // holds *Snapshot
+	// now supplies the current time for schedule evaluation (I-038). It is
+	// injectable so tests can make scheduled-policy behaviour deterministic.
+	// Only scheduled policies consult it.
+	now func() time.Time
 }
 
 func NewPolicyEngine() *Engine {
-	e := &Engine{}
+	return NewPolicyEngineWithClock(nil)
+}
+
+// NewPolicyEngineWithClock builds an engine with an injectable clock. Passing
+// nil uses time.Now. Only schedule evaluation reads the clock; the fast path
+// for unscheduled policies never does.
+func NewPolicyEngineWithClock(clock func() time.Time) *Engine {
+	if clock == nil {
+		clock = time.Now
+	}
+	e := &Engine{now: clock}
 	e.snapshot.Store(buildSnapshot([]Policy{}))
 	return e
 }
@@ -26,6 +41,7 @@ func (e *Engine) LoadPolicies(policies []Policy) error {
 // Evaluation order:
 //   - normalize domain
 //   - exact-match/Bloom fast path (walks up parent domains) => decision
+//   - scheduled policies only count while inside their active window (I-038)
 //   - regex + wildcard slow path (only on exact miss) => decision
 //   - otherwise => ALLOW
 //
@@ -35,6 +51,8 @@ func (e *Engine) LoadPolicies(policies []Policy) error {
 func (e *Engine) Evaluate(domain string) (Decision, error) {
 	d := normalizeDomain(domain)
 	snap := e.snapshot.Load().(*PolicySnapshot)
+
+	now := e.now()
 
 	// Check exact match first, then walk up parent domains for subdomain matching.
 	// e.g., www.godaddy.com → check www.godaddy.com, then godaddy.com.
@@ -46,24 +64,33 @@ func (e *Engine) Evaluate(domain string) (Decision, error) {
 			continue
 		}
 		if pols, ok := snap.Exact[candidate]; ok && len(pols) > 0 {
-			best := pickHighestPriority(pols)
+			// Drop scheduled policies that are outside their active window. A
+			// policy inactive right now is treated as if it did not match, so
+			// evaluation keeps walking up to any always-on parent-domain rule.
+			active := filterActive(pols, now)
+			if len(active) == 0 {
+				continue
+			}
+			best := pickHighestPriority(active)
 			return policyDecision(best), nil
 		}
 	}
 
 	// Slow path: no exact match. Evaluate wildcard and compiled-regex rules,
 	// respecting the same priority ordering as the exact path.
-	if best := matchDynamic(snap, d); best != nil {
+	if best := matchDynamic(snap, d, now); best != nil {
 		return policyDecision(best), nil
 	}
 
 	return Decision{Action: ActionAllow}, nil
 }
 
-// matchDynamic returns the highest-priority policy whose wildcard or compiled
-// regex rule matches d, or nil when nothing matches. A wildcard "*.example.com"
-// matches the base domain ("example.com") and any subdomain of it.
-func matchDynamic(snap *PolicySnapshot, d string) *Policy {
+// matchDynamic returns the highest-priority active policy whose wildcard or
+// compiled regex rule matches d, or nil when nothing matches. A wildcard
+// "*.example.com" matches the base domain ("example.com") and any subdomain
+// of it. Scheduled policies (I-038) are filtered the same as the exact-match
+// path above: a policy inactive right now is treated as if it did not match.
+func matchDynamic(snap *PolicySnapshot, d string, now time.Time) *Policy {
 	var candidates []*Policy
 	for _, w := range snap.Wildcards {
 		if d == w.base || strings.HasSuffix(d, "."+w.base) {
@@ -78,7 +105,31 @@ func matchDynamic(snap *PolicySnapshot, d string) *Policy {
 	if len(candidates) == 0 {
 		return nil
 	}
-	return pickHighestPriority(candidates)
+	return pickHighestPriority(filterActive(candidates, now))
+}
+
+// filterActive returns the policies that are active at the given instant. When
+// none of the candidates carry a schedule it returns the input slice unchanged
+// (no allocation), preserving the fast path for unscheduled policies.
+func filterActive(pols []*Policy, now time.Time) []*Policy {
+	scheduled := false
+	for _, p := range pols {
+		if p.sched != nil {
+			scheduled = true
+			break
+		}
+	}
+	if !scheduled {
+		return pols
+	}
+
+	out := make([]*Policy, 0, len(pols))
+	for _, p := range pols {
+		if p.sched.active(now) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // pickHighestPriority returns the matching policy with highest priority (deterministic).

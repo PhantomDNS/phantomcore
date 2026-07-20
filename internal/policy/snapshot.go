@@ -37,6 +37,18 @@ func buildSnapshot(policies []Policy) *PolicySnapshot {
 	var regexes []compiledRegexRule
 	totalDomains := 0
 
+	// Precompute each policy's schedule once (I-038). A nil result means the
+	// policy is always active. Malformed schedules should have been rejected at
+	// write time; here we fail safe by treating them as always-on rather than
+	// dropping the policy from the snapshot.
+	for i := range policies {
+		cs, err := compileSchedule(&policies[i])
+		if err != nil {
+			cs = nil
+		}
+		policies[i].sched = cs
+	}
+
 	// normalize domains and count total
 	for i := range policies {
 		p := &policies[i]
