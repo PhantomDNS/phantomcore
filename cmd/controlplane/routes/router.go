@@ -97,5 +97,8 @@ func RegisterRoutes(r *gin.Engine, apiHandler *handlers.APIHandler) {
 			cfg.GET("/export", apiHandler.ExportConfig)
 			cfg.POST("/import", apiHandler.ImportConfig)
 		}
+
+		// Reporting endpoint — plain-language period report (text/html/json)
+		api.GET("/reports", apiHandler.GetReport)
 	}
 }

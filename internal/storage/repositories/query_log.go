@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/lopster568/phantomDNS/internal/logger"
+	"github.com/lopster568/phantomDNS/internal/report"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"gorm.io/gorm"
 )
@@ -66,6 +67,10 @@ type QueryLogRepository interface {
 	// window; delivery of the resulting digest is handled elsewhere.
 	GatherWindowStats(w AnalyticsWindow) (WindowStats, error)
 	AnomalyDigestBetween(current, prior AnalyticsWindow, cfg AnomalyThresholds) (AnomalyDigest, error)
+
+	// Aggregate computes period aggregates for the reporting engine. It
+	// satisfies report.Aggregator.
+	Aggregate(from, to time.Time, topN int) (report.Aggregates, error)
 }
 
 // Implementation

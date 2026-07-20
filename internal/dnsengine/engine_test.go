@@ -8,6 +8,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/metrics"
 	"github.com/lopster568/phantomDNS/internal/nrd"
 	"github.com/lopster568/phantomDNS/internal/policy"
+	"github.com/lopster568/phantomDNS/internal/report"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 	"github.com/lopster568/phantomDNS/internal/threat"
@@ -90,6 +91,10 @@ func (m *mockQueryLog) GatherWindowStats(w repositories.AnalyticsWindow) (reposi
 
 func (m *mockQueryLog) AnomalyDigestBetween(current, prior repositories.AnalyticsWindow, cfg repositories.AnomalyThresholds) (repositories.AnomalyDigest, error) {
 	return repositories.AnomalyDigest{}, nil
+}
+
+func (m *mockQueryLog) Aggregate(from, to time.Time, topN int) (report.Aggregates, error) {
+	return report.Aggregates{}, nil
 }
 
 // waitSaved blocks until logQuery's goroutine persists a row (or times out).
