@@ -52,6 +52,20 @@ type QueryLogRepository interface {
 	// newest-first, along with the total number of rows matching the filter
 	// (ignoring the paging window) so callers can render page info.
 	List(filter QueryLogFilter) ([]models.DNSQuery, int64, error)
+
+	// Analytics rollups over the query log. Each is an indexed, bounded
+	// aggregate scoped to an optional time window (see analytics.go).
+	TopClients(w AnalyticsWindow) ([]ClientActivity, error)
+	TopBlockedDomains(w AnalyticsWindow) ([]DomainCount, error)
+	CategoryBreakdown(w AnalyticsWindow) ([]CategoryCount, error)
+	ClientTimeline(clientIP string, w AnalyticsWindow) ([]TimeBucket, error)
+	CategoryHourHeatmap(w AnalyticsWindow) ([]HeatmapCell, error)
+
+	// GatherWindowStats and AnomalyDigestBetween back the anomaly digest
+	// (see anomaly.go). AnomalyDigestBetween compares a current and a prior
+	// window; delivery of the resulting digest is handled elsewhere.
+	GatherWindowStats(w AnalyticsWindow) (WindowStats, error)
+	AnomalyDigestBetween(current, prior AnalyticsWindow, cfg AnomalyThresholds) (AnomalyDigest, error)
 }
 
 // Implementation
