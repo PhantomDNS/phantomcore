@@ -8,8 +8,12 @@ local_only: false
 dataplane:
   listen_addr: "0.0.0.0:1053"
   upstream_resolvers:
+    # Plain UDP/TCP (default). Optionally prefix with "udp://".
     - "8.8.8.8:53"
     - "1.1.1.1:53"
+    # Encrypted upstreams are opt-in per resolver:
+    #   - "tls://1.1.1.1:853"                     # DNS-over-TLS (DoT)
+    #   - "https://cloudflare-dns.com/dns-query"  # DNS-over-HTTPS (DoH)
   anonymization:
     secret: "${PHANTOM_ANON_SECRET:-change-me-in-production}"
   blocklist_update_interval: "6h"

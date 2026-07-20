@@ -116,6 +116,10 @@ func NewUpstreamPool(upstreamAddr string, maxConns int) (*UpstreamPool, error) {
 	}, nil
 }
 
+// Addr returns the upstream address this pool serves. It satisfies the
+// Upstream interface used by UpstreamManager for logging.
+func (p *UpstreamPool) Addr() string { return p.upstreamAddr }
+
 // Close shuts down the pool and closes all sockets. It is safe to call multiple times.
 func (p *UpstreamPool) Close() error {
 	p.mu.Lock()
