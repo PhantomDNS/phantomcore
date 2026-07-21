@@ -16,7 +16,7 @@ import (
 type Result struct {
 	IsSuspicious    bool    `json:"is_suspicious"`
 	ThreatScore     float64 `json:"threat_score"`     // 0.0 to 1.0
-	DetectionMethod string  `json:"detection_method"`  // e.g. "entropy", "dga_pattern", "length"
+	DetectionMethod string  `json:"detection_method"` // e.g. "entropy", "dga_pattern", "length"
 	Reason          string  `json:"reason"`
 }
 
@@ -108,13 +108,13 @@ var (
 
 // Known infrastructure TLDs that produce hex-like labels
 var infraDomains = map[string]bool{
-	"cloudfront.net":  true,
-	"amazonaws.com":   true,
-	"akamaihd.net":    true,
-	"akamaized.net":   true,
-	"sentry.io":       true,
-	"fastly.net":      true,
-	"cloudflare.com":  true,
+	"cloudfront.net":    true,
+	"amazonaws.com":     true,
+	"akamaihd.net":      true,
+	"akamaized.net":     true,
+	"sentry.io":         true,
+	"fastly.net":        true,
+	"cloudflare.com":    true,
 	"azurewebsites.net": true,
 }
 
