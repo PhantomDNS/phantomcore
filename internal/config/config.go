@@ -114,6 +114,19 @@ type DataPlaneConfig struct {
 	// when HeartbeatURL is empty.
 	HeartbeatURL      string `yaml:"heartbeat_url"`
 	HeartbeatInterval string `yaml:"heartbeat_interval"`
+
+	GeoIP GeoIPConfig `yaml:"geoip"`
+}
+
+// GeoIPConfig configures optional ASN/GeoIP answer filtering. It is disabled
+// unless DBPath points at a MaxMind-format database (default: OFF, inert).
+type GeoIPConfig struct {
+	DBPath           string   `yaml:"db_path"`
+	BlockedASNs      []uint   `yaml:"blocked_asns"`
+	BlockedCountries []string `yaml:"blocked_countries"`
+	// Block controls the enforcement mode on a match: false flags the answer as
+	// suspicious but still returns it (default, safer for CDNs); true blocks it.
+	Block bool `yaml:"block"`
 }
 
 // WatchdogIntervalDuration parses WatchdogInterval into a duration. It returns 0
@@ -361,6 +374,20 @@ var DefaultConfig = func() *Config {
 	if interval := os.Getenv("HEARTBEAT_INTERVAL"); interval != "" {
 		cfg.DataPlane.HeartbeatInterval = interval
 	}
+	if p := os.Getenv("GEOIP_DB_PATH"); p != "" {
+		cfg.DataPlane.GeoIP.DBPath = p
+	}
+	if v := os.Getenv("BLOCKED_ASNS"); v != "" {
+		cfg.DataPlane.GeoIP.BlockedASNs = parseUintList(v)
+	}
+	if v := os.Getenv("BLOCKED_COUNTRIES"); v != "" {
+		cfg.DataPlane.GeoIP.BlockedCountries = parseStringList(v)
+	}
+	if v := os.Getenv("GEOIP_BLOCK"); v != "" {
+		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
+			cfg.DataPlane.GeoIP.Block = b
+		}
+	}
 	return cfg
 }()
 
@@ -409,6 +436,34 @@ func splitAndTrim(s string) []string {
 	for _, p := range strings.Split(s, ",") {
 		if v := strings.TrimSpace(p); v != "" {
 			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// parseUintList parses a comma-separated list of unsigned integers, skipping
+// blank or malformed entries.
+func parseUintList(s string) []uint {
+	var out []uint
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if n, err := strconv.ParseUint(part, 10, 64); err == nil {
+			out = append(out, uint(n))
+		}
+	}
+	return out
+}
+
+// parseStringList parses a comma-separated list, trimming and dropping blanks.
+func parseStringList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
 		}
 	}
 	return out
