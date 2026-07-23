@@ -3,9 +3,11 @@ package dnsengine
 import (
 	"net"
 	"testing"
+	"time"
 
 	"github.com/lopster568/phantomDNS/internal/metrics"
 	"github.com/lopster568/phantomDNS/internal/policy"
+	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"github.com/lopster568/phantomDNS/internal/threat"
 	"github.com/miekg/dns"
 )
@@ -36,6 +38,37 @@ func (w *mockResponseWriter) Close() error              { return nil }
 func (w *mockResponseWriter) TsigStatus() error         { return nil }
 func (w *mockResponseWriter) TsigTimersOnly(bool)       {}
 func (w *mockResponseWriter) Hijack()                   {}
+
+// mockQueryLog captures saved DNSQuery rows so tests can assert what was persisted.
+// logQuery saves asynchronously, so Save publishes onto a buffered channel.
+type mockQueryLog struct {
+	saved chan *models.DNSQuery
+}
+
+func newMockQueryLog() *mockQueryLog {
+	return &mockQueryLog{saved: make(chan *models.DNSQuery, 4)}
+}
+
+func (m *mockQueryLog) Save(q *models.DNSQuery) error {
+	m.saved <- q
+	return nil
+}
+
+func (m *mockQueryLog) ListRecent(limit int) ([]models.DNSQuery, error) {
+	return nil, nil
+}
+
+// waitSaved blocks until logQuery's goroutine persists a row (or times out).
+func (m *mockQueryLog) waitSaved(t *testing.T) *models.DNSQuery {
+	t.Helper()
+	select {
+	case q := <-m.saved:
+		return q
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for query to be logged")
+		return nil
+	}
+}
 
 func newTestQuery(domain string) *dns.Msg {
 	m := new(dns.Msg)
@@ -621,4 +654,87 @@ func TestFilterRebind_Empty(t *testing.T) {
 	if dropped != 0 || len(kept) != 0 {
 		t.Errorf("expected empty result for empty input, got dropped=%d kept=%d", dropped, len(kept))
 	}
+}
+
+// TestLogQuery_ThreadsBlockReason verifies logQuery persists the reason it is
+// given into DNSQuery.BlockReason (I-015) without touching the threat fields.
+func TestLogQuery_ThreadsBlockReason(t *testing.T) {
+	tests := []struct {
+		name   string
+		action string
+		reason string
+	}{
+		{"blocklist block", "block", "blocklist"},
+		{"policy block", "block", "block-ads"},
+		{"redirect", "redirect", "redirect:safe-search"},
+		{"plain allow", "allow", ""},
+		{"flagged uses threat method", "flagged", "entropy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mq := newMockQueryLog()
+			e := &Engine{queryLog: mq}
+
+			tr := threat.Result{DetectionMethod: "entropy", Reason: "high entropy"}
+			e.logQuery("example.com", "1.2.3.4", tt.action, tt.reason, tr)
+
+			got := mq.waitSaved(t)
+			if got.BlockReason != tt.reason {
+				t.Errorf("BlockReason = %q, want %q", got.BlockReason, tt.reason)
+			}
+			if got.Action != tt.action {
+				t.Errorf("Action = %q, want %q", got.Action, tt.action)
+			}
+			// Threat fields must be preserved unchanged.
+			if got.DetectionMethod != tr.DetectionMethod || got.ThreatReason != tr.Reason {
+				t.Errorf("threat fields altered: DetectionMethod=%q ThreatReason=%q", got.DetectionMethod, got.ThreatReason)
+			}
+		})
+	}
+}
+
+// TestProcessDNSQuery_LogsBlockReason verifies each blocking call site threads
+// the correct reason string end-to-end through ProcessDNSQuery.
+func TestProcessDNSQuery_LogsBlockReason(t *testing.T) {
+	t.Run("blocklist", func(t *testing.T) {
+		mq := newMockQueryLog()
+		e := newTestEngine(&mockBlocklist{blocked: map[string]bool{"ads.example.com": true}}, nil)
+		e.queryLog = mq
+
+		e.ProcessDNSQuery(&mockResponseWriter{}, newTestQuery("ads.example.com"))
+
+		if got := mq.waitSaved(t); got.BlockReason != "blocklist" {
+			t.Errorf("BlockReason = %q, want %q", got.BlockReason, "blocklist")
+		}
+	})
+
+	t.Run("policy block records policy ID", func(t *testing.T) {
+		policies := []policy.Policy{
+			{ID: "block-ads", Action: "BLOCK", Priority: 100, Domains: []string{"policy-blocked.com"}},
+		}
+		mq := newMockQueryLog()
+		e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, policies)
+		e.queryLog = mq
+
+		e.ProcessDNSQuery(&mockResponseWriter{}, newTestQuery("policy-blocked.com"))
+
+		if got := mq.waitSaved(t); got.BlockReason != "block-ads" {
+			t.Errorf("BlockReason = %q, want %q", got.BlockReason, "block-ads")
+		}
+	})
+
+	t.Run("redirect records redirect:policyID", func(t *testing.T) {
+		policies := []policy.Policy{
+			{ID: "safe-search", Action: "REDIRECT", Redirect: "1.2.3.4", Priority: 100, Domains: []string{"redirect-me.com"}},
+		}
+		mq := newMockQueryLog()
+		e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, policies)
+		e.queryLog = mq
+
+		e.ProcessDNSQuery(&mockResponseWriter{}, newTestQuery("redirect-me.com"))
+
+		if got := mq.waitSaved(t); got.BlockReason != "redirect:safe-search" {
+			t.Errorf("BlockReason = %q, want %q", got.BlockReason, "redirect:safe-search")
+		}
+	})
 }
