@@ -25,6 +25,8 @@ dataplane:
   # Enable DNS 0x20 case-randomization on outbound upstream queries
   # (anti-spoofing hardening). Default false. Env override: DNS_0X20.
   dns_0x20: false
+  # Address for the Prometheus /metrics endpoint (defaults to 0.0.0.0:9153).
+  metrics_addr: "0.0.0.0:9153"
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"
