@@ -495,6 +495,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		} else if blocked {
 			logger.Log.Infof("Blocked by blocklist: %s", domainName)
 			e.logQuery(domainName, clientIP, "block", "blocklist", threatResult)
+			e.metrics.RecordBlocked()
 			e.respondBlocked(w, r, domainName, "blocklist")
 			success = true
 			return
@@ -516,6 +517,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 	case policy.ActionDeny:
 		logger.Log.Infof("Blocking via policy %s", decision.PolicyID)
 		e.logQuery(domainName, clientIP, "block", decision.PolicyID, threatResult)
+		e.metrics.RecordBlocked()
 		e.respondBlocked(w, r, domainName, decision.PolicyID)
 		success = true
 

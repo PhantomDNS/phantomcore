@@ -109,6 +109,11 @@ type DataPlaneConfig struct {
 	TyposquatBrands []string `yaml:"typosquat_brands"`
 	// TyposquatBlock blocks typosquat hits instead of only flagging them.
 	TyposquatBlock bool `yaml:"typosquat_block"`
+
+	// Heartbeat is opt-in, metadata-only fleet status reporting. It is disabled
+	// when HeartbeatURL is empty.
+	HeartbeatURL      string `yaml:"heartbeat_url"`
+	HeartbeatInterval string `yaml:"heartbeat_interval"`
 }
 
 // WatchdogIntervalDuration parses WatchdogInterval into a duration. It returns 0
@@ -349,6 +354,12 @@ var DefaultConfig = func() *Config {
 		case "1", "true", "yes", "on":
 			cfg.DataPlane.TyposquatBlock = true
 		}
+	}
+	if url := os.Getenv("HEARTBEAT_URL"); url != "" {
+		cfg.DataPlane.HeartbeatURL = url
+	}
+	if interval := os.Getenv("HEARTBEAT_INTERVAL"); interval != "" {
+		cfg.DataPlane.HeartbeatInterval = interval
 	}
 	return cfg
 }()

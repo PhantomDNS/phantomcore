@@ -15,6 +15,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/diskhealth"
 	"github.com/lopster568/phantomDNS/internal/dnsengine"
 	dataplanegrpc "github.com/lopster568/phantomDNS/internal/grpc/dataplane"
+	"github.com/lopster568/phantomDNS/internal/heartbeat"
 	"github.com/lopster568/phantomDNS/internal/logger"
 	"github.com/lopster568/phantomDNS/internal/metrics/promexport"
 	"github.com/lopster568/phantomDNS/internal/policy"
@@ -151,6 +152,15 @@ func main() {
 			logger.Log.Errorf("metrics server failed: %v", err)
 		}
 	}()
+
+	// 6c. Heartbeat reporter — opt-in, metadata-only fleet status reporting.
+	// Started only when HEARTBEAT_URL is configured; non-blocking and never fatal.
+	hb := heartbeat.New(heartbeat.Config{
+		URL:      config.DefaultConfig.DataPlane.HeartbeatURL,
+		Interval: config.DefaultConfig.DataPlane.HeartbeatInterval,
+		DBPath:   dbPath,
+	}, engine.Metrics(), engine, repos.Blocklist)
+	hb.Start(context.Background())
 
 	// 7. Attach blocklist checker and start DNS server
 	engine.AttachBlocklistChecker(repos.Blocklist)
