@@ -6,8 +6,9 @@ import (
 	"time"
 
 	pb "github.com/lopster568/phantomDNS/internal/gen/proto/phantomdns/v1"
-	v1 "github.com/lopster568/phantomDNS/internal/gen/proto/phantomdns/v1"
+	"github.com/lopster568/phantomDNS/internal/logger"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -17,9 +18,11 @@ type Client struct {
 	metrics pb.DataPlaneMetricsServiceClient
 }
 
-// New creates and connects the gRPC client.
+// New creates the gRPC client. Like grpc.Dial before it, grpc.NewClient does
+// not block: it establishes the connection lazily on first use, so callers
+// relying on that (no grpc.WithBlock() is used here) see no behavior change.
 func New(address string) (*Client, error) {
-	conn, err := grpc.Dial(address, grpc.WithInsecure()) // TLS later
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials())) // TLS later
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
@@ -32,7 +35,9 @@ func New(address string) (*Client, error) {
 }
 
 func (c *Client) Close() {
-	c.conn.Close()
+	if err := c.conn.Close(); err != nil {
+		logger.Log.Warn("grpc controlplane client: close error: ", err)
+	}
 }
 
 // GetStatus fetches dataplane runtime status.
@@ -53,7 +58,7 @@ func (c *Client) SetAcceptQueries(enabled bool) error {
 	return err
 }
 
-func (c *Client) GetLiveQueryMetrics(ctx context.Context) (*v1.LiveQueryMetrics, error) {
+func (c *Client) GetLiveQueryMetrics(ctx context.Context) (*pb.LiveQueryMetrics, error) {
 	return c.metrics.GetLiveQueryMetrics(ctx, &emptypb.Empty{})
 }
 

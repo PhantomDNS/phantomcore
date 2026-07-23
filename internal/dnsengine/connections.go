@@ -233,7 +233,7 @@ func (p *UpstreamPool) Exchange(q *dns.Msg, timeout time.Duration) (*dns.Msg, er
 	}
 
 	var hadErr bool
-	defer p.releaseTCPConn(idx, hadErr)
+	defer func() { p.releaseTCPConn(idx, hadErr) }()
 
 	// wrap with dns.Conn for framing (length-prefix) and convenience
 	dnsConn := &dns.Conn{Conn: tcpConn}
