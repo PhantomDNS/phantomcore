@@ -10,11 +10,11 @@ import (
 func Auth(authRepo repositories.AuthRepository) gin.HandlerFunc {
 	// Paths that don't require authentication
 	exemptPaths := map[string]bool{
-		"/health":               true,
-		"/":                     true,
-		"/api/v1/auth/status":   true,
-		"/api/v1/auth/login":    true,
-		"/api/v1/auth/setup":    true,
+		"/health":             true,
+		"/":                   true,
+		"/api/v1/auth/status": true,
+		"/api/v1/auth/login":  true,
+		"/api/v1/auth/setup":  true,
 	}
 
 	return func(c *gin.Context) {
