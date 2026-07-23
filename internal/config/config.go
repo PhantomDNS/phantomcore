@@ -50,6 +50,10 @@ type DataPlaneConfig struct {
 	// enforced-safe CNAME targets (Google/Bing/DuckDuckGo SafeSearch and
 	// YouTube Restricted Mode). Default false = no rewrite.
 	SafeSearch bool `yaml:"safe_search"`
+
+	// DNS0x20 enables DNS 0x20 case-randomization on outbound upstream queries
+	// (anti-spoofing hardening). Default false = behaviour unchanged.
+	DNS0x20 bool `yaml:"dns_0x20"`
 }
 
 type ControlPlaneConfig struct {
@@ -131,6 +135,13 @@ var DefaultConfig = func() *Config {
 	if v := os.Getenv("SAFE_SEARCH"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.DataPlane.SafeSearch = b
+		}
+	}
+	if v := os.Getenv("DNS_0X20"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.DataPlane.DNS0x20 = b
+		} else {
+			logger.Log.Warnf("Invalid DNS_0X20 value %q, ignoring", v)
 		}
 	}
 	return cfg

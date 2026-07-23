@@ -22,6 +22,9 @@ dataplane:
   # Rewrite well-known search/video hosts to their enforced-safe targets
   # (Google/Bing/DuckDuckGo SafeSearch, YouTube Restricted Mode). Env: SAFE_SEARCH.
   safe_search: false
+  # Enable DNS 0x20 case-randomization on outbound upstream queries
+  # (anti-spoofing hardening). Default false. Env override: DNS_0X20.
+  dns_0x20: false
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"

@@ -83,7 +83,7 @@ func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
 }
 
 func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *policy.Engine) (*Engine, error) {
-	mgr, err := NewUpstreamManager(cfg.UpstreamResolvers, 4)
+	mgr, err := NewUpstreamManager(cfg.UpstreamResolvers, 4, WithDNS0x20(cfg.DNS0x20))
 	state := &RuntimeState{}
 	state.acceptQueries.Store(false)
 	qm := metrics.NewQueryMetrics()
