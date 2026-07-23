@@ -45,6 +45,11 @@ type Engine struct {
 	statistics      repositories.StatisticsRepository
 	threatDetector  *threat.Detector
 
+	// fastFlux is nil when fast-flux detection is disabled (the default). When
+	// set, upstream answers on the allow path are fed to it and tripping domains
+	// are flagged (never blocked).
+	fastFlux *fastFluxTracker
+
 	// serveStale enables answering from an expired cache entry on upstream failure.
 	serveStale bool
 	// cache holds recent allowed answers for serve-stale; nil when disabled.
@@ -152,6 +157,15 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		e.serveStale = true
 		e.cache = newAnswerCache(defaultCacheSize, defaultStaleFor)
 		logger.Log.Info("serve-stale enabled: expired cache answers may be served on upstream failure")
+	}
+	if cfg.FastFluxDetection {
+		e.fastFlux = newFastFluxTracker(
+			cfg.FastFluxIPThreshold,
+			cfg.FastFluxTTLMaxSec,
+			defaultFastFluxWindow,
+			defaultFastFluxMaxDomains,
+			nil,
+		)
 	}
 	return e, nil
 }
@@ -268,7 +282,11 @@ func (e *Engine) respondSafeSearch(w dns.ResponseWriter, r *dns.Msg, target stri
 	}
 }
 
-func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) {
+// forwardUpstream forwards the query to upstream and writes the response back
+// (subject to rebind-protection filtering). It returns true when fast-flux
+// detection is enabled and the answer trips the heuristic (advisory only — the
+// response is never altered or blocked for fast-flux).
+func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) bool {
 	resp, err := e.upstreamManager.Exchange(r, 5, 2)
 	if err != nil || resp == nil {
 		if err != nil {
@@ -285,17 +303,27 @@ func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string
 				if werr := w.WriteMsg(ent.reply(r, staleTTL)); werr != nil {
 					logger.Log.Error("Failed to write stale DNS response: " + werr.Error())
 				}
-				return
+				return false
 			}
 		}
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeServerFailure)
 		_ = w.WriteMsg(m)
-		return
+		return false
 	}
 	// Cache successful answers so they can back a future serve-stale response.
 	if e.serveStale && e.cache != nil && resp.Rcode == dns.RcodeSuccess {
 		e.cache.Put(cacheKey(r.Question[0]), resp)
+	}
+
+	// Fast-flux detection (flag-only, never blocks). Inspect the answer's A/AAAA
+	// records before writing the response back.
+	fastFlux := false
+	if e.fastFlux != nil {
+		if ips, ttl, ok := extractAnswerIPs(resp); ok && e.fastFlux.observe(domain, ips, ttl) {
+			fastFlux = true
+			logger.Log.Warnf("Fast-flux suspected: %s (distinct-IP churn with low TTL within window)", domain)
+		}
 	}
 
 	// DNS rebinding protection: strip answers that map a public name to an
@@ -309,7 +337,7 @@ func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string
 			qtype := r.Question[0].Qtype
 			if len(kept) == 0 && (qtype == dns.TypeA || qtype == dns.TypeAAAA) {
 				e.respondBlocked(w, r, domain, "rebind")
-				return
+				return fastFlux
 			}
 		}
 	}
@@ -317,6 +345,7 @@ func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string
 	if err := w.WriteMsg(resp); err != nil {
 		logger.Log.Error("Failed to write DNS response: " + err.Error())
 	}
+	return fastFlux
 }
 
 // normalizeDomain lowercases and strips the trailing dot from a DNS FQDN.
@@ -549,8 +578,18 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 			reason = threatResult.DetectionMethod
 			logger.Log.Warnf("Suspicious domain allowed: %s (score=%.2f, method=%s)", domainName, threatResult.ThreatScore, threatResult.DetectionMethod)
 		}
+		// Forward first so the fast-flux heuristic can inspect the answer, then
+		// log — a tripped domain is flagged (never blocked).
+		if e.forwardUpstream(w, r, domainName) {
+			action = "flagged"
+			if !threatResult.IsSuspicious {
+				threatResult.IsSuspicious = true
+				threatResult.DetectionMethod = "fast-flux"
+				threatResult.Reason = "fast-flux: distinct-IP churn with low TTL"
+			}
+			reason = threatResult.DetectionMethod
+		}
 		e.logQuery(domainName, clientIP, action, reason, threatResult)
-		e.forwardUpstream(w, r, domainName)
 		success = true
 	}
 }
