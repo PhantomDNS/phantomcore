@@ -13,6 +13,9 @@ dataplane:
   # Env overrides: THREAT_BLOCK_THRESHOLD, THREAT_BLOCK_DRYRUN.
   threat_block_threshold: 0
   threat_block_dryrun: false
+  # Reject upstream answers that map a public name to a private/loopback/
+  # link-local IP (DNS rebinding defense). Env override: REBIND_PROTECTION.
+  rebind_protection: false
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"
