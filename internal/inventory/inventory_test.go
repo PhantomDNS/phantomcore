@@ -208,3 +208,24 @@ func TestConfigFromEnv_DefaultOff(t *testing.T) {
 		t.Errorf("inventory should default to disabled")
 	}
 }
+
+func TestLookup(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(1_750_000_000, 0).UTC()}
+	inv := New(Config{Enabled: true}, clk)
+	inv.merge(
+		[]arpEntry{{IP: "192.168.1.42", MAC: "aa:bb:cc:dd:ee:42"}},
+		[]dhcpLease{{IP: "192.168.1.42", MAC: "aa:bb:cc:dd:ee:42", Hostname: "roshan-laptop"}},
+	)
+
+	d, ok := inv.Lookup("192.168.1.42")
+	if !ok {
+		t.Fatal("expected to find the merged device by IP")
+	}
+	if d.MAC != "aa:bb:cc:dd:ee:42" || d.Hostname != "roshan-laptop" {
+		t.Errorf("unexpected device from Lookup: %+v", d)
+	}
+
+	if _, ok := inv.Lookup("10.0.0.99"); ok {
+		t.Error("Lookup of an unknown IP should report not found")
+	}
+}

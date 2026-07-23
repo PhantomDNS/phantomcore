@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lopster568/phantomDNS/internal/alert"
 	"github.com/lopster568/phantomDNS/internal/blocklist"
 	"github.com/lopster568/phantomDNS/internal/blocklist/bundle"
 	"github.com/lopster568/phantomDNS/internal/config"
@@ -16,6 +17,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/geoip"
 	dataplanegrpc "github.com/lopster568/phantomDNS/internal/grpc/dataplane"
 	"github.com/lopster568/phantomDNS/internal/heartbeat"
+	"github.com/lopster568/phantomDNS/internal/inventory"
 	"github.com/lopster568/phantomDNS/internal/logger"
 	"github.com/lopster568/phantomDNS/internal/metrics/promexport"
 	"github.com/lopster568/phantomDNS/internal/nrd"
@@ -121,6 +123,18 @@ func main() {
 	engine, err := dnsengine.NewDNSEngine(config.DefaultConfig.DataPlane, repos, policyEngine)
 	if err != nil {
 		logger.Log.Fatal("Failed to create DNS engine: " + err.Error())
+	}
+
+	// 5a. Infected-device alerting (I-045). Resolve client IPs to devices via
+	// the passive LAN inventory so alerts carry MAC + hostname, and optionally
+	// forward fired alerts to a webhook. Both the inventory (INVENTORY_ENABLED)
+	// and alerting (DEVICE_ALERT_THRESHOLD) are off by default.
+	deviceInventory := inventory.New(inventory.ConfigFromEnv(), nil)
+	deviceInventory.Start()
+	defer deviceInventory.Stop()
+	engine.AttachDeviceResolver(alert.NewInventoryResolver(deviceInventory))
+	if sink := alert.NewWebhookSink(os.Getenv("DEVICE_ALERT_WEBHOOK")); sink != nil {
+		engine.AttachAlertSink(sink)
 	}
 
 	// 5b. Optional ASN/GeoIP answer filtering — inert unless GEOIP_DB_PATH is set.

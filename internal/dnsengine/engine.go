@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lopster568/phantomDNS/internal/alert"
 	"github.com/lopster568/phantomDNS/internal/config"
 	"github.com/lopster568/phantomDNS/internal/geoip"
 	"github.com/lopster568/phantomDNS/internal/logger"
@@ -106,6 +107,12 @@ type Engine struct {
 	rateLimiter *rateLimiter
 
 	safeSearch bool
+
+	// alerter tracks repeated C2/malware hits per client and fires infected-
+	// device alerts (I-045). Off by default (nil sink, no resolver) unless
+	// DEVICE_ALERT_THRESHOLD is configured; always non-nil, so callers never
+	// need a nil check before Attach*.
+	alerter *alert.Alerter
 }
 
 // safeSearchTargets maps well-known search/video hostnames to their
@@ -144,6 +151,33 @@ func (e *Engine) AttachGeoFilter(f *geoip.Filter) {
 // engine. Passing a checker with no feed configured leaves NRD inert.
 func (e *Engine) AttachNRDChecker(n NRDChecker) {
 	e.nrd = n
+}
+
+// AttachDeviceResolver wires a device resolver (e.g. the LAN inventory) into
+// the infected-device alerter so alerts are enriched with MAC and hostname.
+// Safe to call with a nil alerter.
+func (e *Engine) AttachDeviceResolver(r alert.DeviceResolver) {
+	if e.alerter != nil {
+		e.alerter.SetResolver(r)
+	}
+}
+
+// AttachAlertSink wires an optional side-channel (e.g. a webhook) that receives
+// each fired infected-device alert. Safe to call with a nil alerter or sink.
+func (e *Engine) AttachAlertSink(fn func(alert.Alert)) {
+	if e.alerter != nil && fn != nil {
+		e.alerter.SetSink(fn)
+	}
+}
+
+// Alerts returns the current set of suspected-compromised devices. It is the
+// status accessor for infected-device alerting and is empty when the feature
+// is disabled.
+func (e *Engine) Alerts() []alert.Alert {
+	if e.alerter == nil {
+		return nil
+	}
+	return e.alerter.Suspected()
 }
 
 func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *policy.Engine) (*Engine, error) {
@@ -205,6 +239,10 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		safeSearch:           cfg.SafeSearch,
 		nodLedger:            ledger,
 		nodBlock:             cfg.NODBlock,
+		// Infected-device alerting (I-045). Off by default: enabled only when a
+		// positive DEVICE_ALERT_THRESHOLD is configured. A device resolver is
+		// attached later via AttachDeviceResolver.
+		alerter: alert.NewAlerter(alert.ConfigFromEnv(), nil, nil),
 	}
 	e.setUpstreamExchanger(mgr)
 	if cfg.ServeStale {
@@ -597,6 +635,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 			logger.Log.Infof("Blocked by blocklist: %s", domainName)
 			e.logQuery(domainName, clientIP, "block", "blocklist", threatResult)
 			e.metrics.RecordBlocked()
+			e.recordBlocked(clientIP, domainName)
 			e.respondBlocked(w, r, domainName, "blocklist")
 			success = true
 			return
@@ -638,6 +677,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		logger.Log.Infof("Blocking via policy %s", decision.PolicyID)
 		e.logQuery(domainName, clientIP, "block", decision.PolicyID, threatResult)
 		e.metrics.RecordBlocked()
+		e.recordBlocked(clientIP, domainName)
 		e.respondBlocked(w, r, domainName, decision.PolicyID)
 		success = true
 
@@ -835,6 +875,29 @@ func (e *Engine) logQuery(domain, clientIP, action, reason string, tr threat.Res
 			}
 		}
 	}()
+}
+
+// recordBlocked feeds one blocked resolution into the infected-device alerter,
+// keyed by the client's IP (port stripped). It is a no-op when alerting is
+// disabled. Malware/C2 blocklist hits and policy-deny hits both count.
+func (e *Engine) recordBlocked(clientAddr, domain string) {
+	if e.alerter == nil {
+		return
+	}
+	e.alerter.RecordBlocked(clientIPOnly(clientAddr), domain)
+}
+
+// clientIPOnly strips the transport port from a "host:port" remote address,
+// returning the bare IP used as the inventory key. Inputs without a port are
+// returned unchanged.
+func clientIPOnly(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func (e *Engine) Metrics() *metrics.QueryMetrics {
