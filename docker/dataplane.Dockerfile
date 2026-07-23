@@ -1,6 +1,8 @@
 # --- Builder stage ---
 # SPDX-License-Identifier: GPL-3.0-or-later
-FROM golang:1.24-alpine AS builder
+# go.mod requires go >= 1.25.0 (see controlplane.Dockerfile for why); this
+# image has no GOTOOLCHAIN auto-fetch, so the builder must match directly.
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies including protobuf compiler

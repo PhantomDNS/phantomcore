@@ -1,5 +1,6 @@
 # Combined controlplane + dataplane Dockerfile (multi-arch)
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
+# go.mod requires go >= 1.25.0 (see docker/controlplane.Dockerfile for why)
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 ARG TARGETARCH
 ARG TARGETOS=linux
 WORKDIR /app
