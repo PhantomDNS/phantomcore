@@ -738,3 +738,101 @@ func TestProcessDNSQuery_LogsBlockReason(t *testing.T) {
 		}
 	})
 }
+
+// cnameTarget returns the normalized target of the first CNAME answer, or "".
+func cnameTarget(m *dns.Msg) string {
+	if m == nil {
+		return ""
+	}
+	for _, rr := range m.Answer {
+		if c, ok := rr.(*dns.CNAME); ok {
+			return normalizeDomain(c.Target)
+		}
+	}
+	return ""
+}
+
+func TestProcessDNSQuery_SafeSearchRewrite(t *testing.T) {
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{"www.google.com", "forcesafesearch.google.com"},
+		{"google.com", "forcesafesearch.google.com"},
+		{"www.bing.com", "strict.bing.com"},
+		{"duckduckgo.com", "safe.duckduckgo.com"},
+		{"www.youtube.com", "restrictmoderate.youtube.com"},
+		{"m.youtube.com", "restrictmoderate.youtube.com"},
+		{"youtubei.googleapis.com", "restrictmoderate.youtube.com"},
+	}
+	for _, tt := range tests {
+		e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+		e.safeSearch = true
+
+		w := &mockResponseWriter{}
+		e.ProcessDNSQuery(w, newTestQuery(tt.query))
+
+		if w.msg == nil {
+			t.Fatalf("%s: expected a response, got nil", tt.query)
+		}
+		if got := cnameTarget(w.msg); got != tt.want {
+			t.Errorf("%s: expected CNAME to %q, got %q (answer=%+v)", tt.query, tt.want, got, w.msg.Answer)
+		}
+	}
+}
+
+func TestProcessDNSQuery_SafeSearchUnmappedHost(t *testing.T) {
+	// SafeSearch on, but an unmapped host must not be rewritten. With an empty
+	// upstream manager the allow path yields SERVFAIL (no network) — the point
+	// is that there is no CNAME rewrite.
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.safeSearch = true
+	e.upstreamManager = &UpstreamManager{}
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("example.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected a response")
+	}
+	if got := cnameTarget(w.msg); got != "" {
+		t.Errorf("expected no CNAME rewrite for unmapped host, got CNAME to %q", got)
+	}
+}
+
+func TestProcessDNSQuery_SafeSearchDisabled(t *testing.T) {
+	// SafeSearch disabled (default): a mapped host must not be rewritten.
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.safeSearch = false
+	e.upstreamManager = &UpstreamManager{}
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("www.google.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected a response")
+	}
+	if got := cnameTarget(w.msg); got != "" {
+		t.Errorf("expected no CNAME rewrite when SafeSearch disabled, got CNAME to %q", got)
+	}
+}
+
+func TestProcessDNSQuery_SafeSearchDoesNotOverrideBlock(t *testing.T) {
+	// A mapped host that is also blocklisted must still be blocked, not rewritten.
+	bl := &mockBlocklist{blocked: map[string]bool{"www.google.com": true}}
+	e := newTestEngine(bl, nil)
+	e.safeSearch = true
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("www.google.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected a response")
+	}
+	if !isBlockedResponse(w.msg) {
+		t.Errorf("expected block to win over SafeSearch rewrite, got %+v", w.msg.Answer)
+	}
+	if got := cnameTarget(w.msg); got != "" {
+		t.Errorf("expected no CNAME on blocked host, got CNAME to %q", got)
+	}
+}

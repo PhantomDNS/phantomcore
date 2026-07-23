@@ -52,6 +52,30 @@ type Engine struct {
 	rebindProtection bool
 
 	rateLimiter *rateLimiter
+
+	safeSearch bool
+}
+
+// safeSearchTargets maps well-known search/video hostnames to their
+// enforced-safe CNAME target. When SafeSearch is enabled, a query for any
+// mapped host on the allow path is answered with a CNAME to its target so the
+// client re-resolves the safe endpoint. These are the vendor-documented
+// SafeSearch / YouTube Restricted Mode hostnames.
+var safeSearchTargets = map[string]string{
+	// Google SafeSearch
+	"google.com":     "forcesafesearch.google.com",
+	"www.google.com": "forcesafesearch.google.com",
+	// Bing strict SafeSearch
+	"bing.com":     "strict.bing.com",
+	"www.bing.com": "strict.bing.com",
+	// DuckDuckGo safe search
+	"duckduckgo.com": "safe.duckduckgo.com",
+	// YouTube Restricted Mode (moderate)
+	"youtube.com":             "restrictmoderate.youtube.com",
+	"www.youtube.com":         "restrictmoderate.youtube.com",
+	"m.youtube.com":           "restrictmoderate.youtube.com",
+	"youtubei.googleapis.com": "restrictmoderate.youtube.com",
+	"youtube.googleapis.com":  "restrictmoderate.youtube.com",
 }
 
 func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
@@ -94,6 +118,7 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		abusedTLDs:           abusedTLDs,
 		rebindProtection:     cfg.RebindProtection,
 		rateLimiter:          newRateLimiter(cfg.ClientRateLimitPerSec),
+		safeSearch:           cfg.SafeSearch,
 	}, nil
 }
 
@@ -187,6 +212,26 @@ func filterRebind(answers []dns.RR) (kept []dns.RR, dropped int) {
 		kept = append(kept, rr)
 	}
 	return kept, dropped
+}
+
+// respondSafeSearch answers the query with a CNAME pointing the queried name
+// at its enforced-safe target (e.g. www.google.com -> forcesafesearch.google.com).
+// The client then re-resolves the target through normal resolution.
+func (e *Engine) respondSafeSearch(w dns.ResponseWriter, r *dns.Msg, target string) {
+	m := new(dns.Msg)
+	m.SetReply(r)
+	name := r.Question[0].Name
+	rr, err := dns.NewRR(name + " 60 IN CNAME " + dns.Fqdn(target))
+	if err != nil {
+		logger.Log.Error("Failed to create SafeSearch CNAME RR: " + err.Error())
+		m.SetRcode(r, dns.RcodeServerFailure)
+		_ = w.WriteMsg(m)
+		return
+	}
+	m.Answer = append(m.Answer, rr)
+	if err := w.WriteMsg(m); err != nil {
+		logger.Log.Error("Failed to write SafeSearch response: " + err.Error())
+	}
 }
 
 func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) {
@@ -414,6 +459,20 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 			success = true
 			return
 		}
+
+		// SafeSearch enforcement: on the allow path, rewrite well-known search/
+		// video hosts to their enforced-safe target via a CNAME so the client
+		// re-resolves the safe endpoint. Never overrides a block/redirect above.
+		if e.safeSearch {
+			if target, ok := safeSearchTargets[domainName]; ok {
+				logger.Log.Infof("SafeSearch rewrite: %s -> %s", domainName, target)
+				e.logQuery(domainName, clientIP, "allow", "", threatResult)
+				e.respondSafeSearch(w, r, target)
+				success = true
+				return
+			}
+		}
+
 		action := "allow"
 		reason := ""
 		if threatResult.IsSuspicious {
