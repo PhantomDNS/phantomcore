@@ -58,8 +58,76 @@ type DataPlaneConfig struct {
 }
 
 type ControlPlaneConfig struct {
-	ListenAddr string `yaml:"listen_addr"`
+	ListenAddr string    `yaml:"listen_addr"`
+	TLS        TLSConfig `yaml:"tls"`
 }
+
+// TLSConfig controls how the control-plane HTTP API is served.
+//
+// Selection precedence (see Mode):
+//  1. CertFile+KeyFile both set  -> serve HTTPS with the operator-provided cert.
+//  2. AutoSelfSigned true        -> generate/persist a self-signed cert, serve HTTPS.
+//  3. otherwise                  -> plain HTTP (the default, no regression).
+//
+// Public ACME cannot issue certificates for private-LAN names, hence the
+// operator-provided and self-signed options instead of automatic ACME.
+type TLSConfig struct {
+	// CertFile / KeyFile point to an operator-provided certificate and private
+	// key (PEM). When both are set, TLS is served using them.
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	// AutoSelfSigned generates a self-signed certificate on first boot when no
+	// cert/key pair is provided.
+	AutoSelfSigned bool `yaml:"auto_self_signed"`
+	// SelfSignedDir is where the generated self-signed cert/key are persisted so
+	// they survive restarts.
+	SelfSignedDir string `yaml:"self_signed_dir"`
+}
+
+// TLSMode is the resolved serving mode for the control-plane HTTP API.
+type TLSMode int
+
+const (
+	// TLSModeDisabled serves plain HTTP (the default).
+	TLSModeDisabled TLSMode = iota
+	// TLSModeProvided serves HTTPS using an operator-provided cert/key.
+	TLSModeProvided
+	// TLSModeSelfSigned serves HTTPS using a generated, persisted self-signed cert.
+	TLSModeSelfSigned
+)
+
+func (m TLSMode) String() string {
+	switch m {
+	case TLSModeProvided:
+		return "provided"
+	case TLSModeSelfSigned:
+		return "self-signed"
+	default:
+		return "disabled"
+	}
+}
+
+// Mode resolves how TLS should be served. A fully provided cert/key pair always
+// wins; a partial pair (only one of the two) is ignored and falls through to the
+// self-signed or disabled path so a misconfiguration never silently breaks boot.
+func (t TLSConfig) Mode() TLSMode {
+	if t.CertFile != "" && t.KeyFile != "" {
+		return TLSModeProvided
+	}
+	if t.AutoSelfSigned {
+		return TLSModeSelfSigned
+	}
+	return TLSModeDisabled
+}
+
+// Enabled reports whether the control-plane API should be served over TLS.
+func (t TLSConfig) Enabled() bool {
+	return t.Mode() != TLSModeDisabled
+}
+
+// DefaultSelfSignedDir is used when AutoSelfSigned is enabled but no directory
+// was configured.
+const DefaultSelfSignedDir = "/app/data/tls"
 
 func defaultConfig() *Config {
 	return &Config{
@@ -75,6 +143,9 @@ func defaultConfig() *Config {
 		},
 		ControlPlane: ControlPlaneConfig{
 			ListenAddr: "0.0.0.0:8080",
+			TLS: TLSConfig{
+				SelfSignedDir: DefaultSelfSignedDir,
+			},
 		},
 	}
 }
@@ -153,6 +224,7 @@ var DefaultConfig = func() *Config {
 	if cfg.DataPlane.MetricsAddr == "" {
 		cfg.DataPlane.MetricsAddr = "0.0.0.0:9153"
 	}
+	applyTLSEnv(&cfg.ControlPlane.TLS)
 	return cfg
 }()
 
@@ -168,6 +240,30 @@ func parseAbusedTLDs(v string) []string {
 		}
 	}
 	return tlds
+}
+
+// applyTLSEnv overlays TLS_* environment variables onto the control-plane TLS
+// config and fills in the self-signed directory default when unset.
+func applyTLSEnv(t *TLSConfig) {
+	if v := os.Getenv("TLS_CERT_FILE"); v != "" {
+		t.CertFile = v
+	}
+	if v := os.Getenv("TLS_KEY_FILE"); v != "" {
+		t.KeyFile = v
+	}
+	if v := os.Getenv("TLS_AUTO_SELF_SIGNED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			t.AutoSelfSigned = b
+		} else {
+			logger.Log.Warnf("invalid TLS_AUTO_SELF_SIGNED value %q, ignoring", v)
+		}
+	}
+	if v := os.Getenv("TLS_SELF_SIGNED_DIR"); v != "" {
+		t.SelfSignedDir = v
+	}
+	if t.SelfSignedDir == "" {
+		t.SelfSignedDir = DefaultSelfSignedDir
+	}
 }
 
 func configPath() string {
