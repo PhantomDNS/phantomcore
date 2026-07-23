@@ -54,6 +54,8 @@ func RegisterRoutes(r *gin.Engine, apiHandler *handlers.APIHandler) {
 			blocklists.GET("", apiHandler.ListBlocklists)
 			blocklists.POST("", apiHandler.CreateBlocklist)
 			blocklists.GET("/:id", apiHandler.GetBlocklist)
+			blocklists.PUT("/:id", apiHandler.UpdateBlocklist)
+			blocklists.PATCH("/:id", apiHandler.UpdateBlocklist)
 			blocklists.DELETE("/:id", apiHandler.DeleteBlocklist)
 		}
 

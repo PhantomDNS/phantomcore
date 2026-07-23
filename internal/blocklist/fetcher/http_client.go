@@ -64,7 +64,12 @@ func (h *HTTPFetcher) Fetch(ctx context.Context, src parser.SourceConfig, knownE
 
 	bo := backoff.NewExponentialBackOff()
 	bo.MaxElapsedTime = 2 * time.Minute
-	if err := backoff.Retry(op, bo); err != nil {
+	// Wrap the caller's context so retries stop as soon as it is canceled or
+	// its deadline expires, instead of running the full backoff schedule (up
+	// to MaxElapsedTime) regardless of the caller's own timeout. Without this,
+	// a dead feed retried for close to 2 minutes even when the caller asked
+	// for a much shorter timeout.
+	if err := backoff.Retry(op, backoff.WithContext(bo, ctx)); err != nil {
 		return nil, "", err
 	}
 	return body, etag, nil
