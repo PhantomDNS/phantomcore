@@ -54,8 +54,10 @@ func TestRateLimiter_WindowResets(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(0, 0)}
 	rl := newTestLimiter(2, clk)
 
-	if !rl.allow("10.0.0.1") || !rl.allow("10.0.0.1") {
-		t.Fatal("first two queries should be allowed")
+	for i := 0; i < 2; i++ {
+		if !rl.allow("10.0.0.1") {
+			t.Fatalf("query %d should be allowed", i+1)
+		}
 	}
 	if rl.allow("10.0.0.1") {
 		t.Fatal("third query in the same window should be denied")
@@ -78,8 +80,10 @@ func TestRateLimiter_PartialWindowDoesNotReset(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(0, 0)}
 	rl := newTestLimiter(2, clk)
 
-	if !rl.allow("10.0.0.1") || !rl.allow("10.0.0.1") {
-		t.Fatal("first two queries should be allowed")
+	for i := 0; i < 2; i++ {
+		if !rl.allow("10.0.0.1") {
+			t.Fatalf("query %d should be allowed", i+1)
+		}
 	}
 	// Less than a full second: still the same window, still denied.
 	clk.advance(500 * time.Millisecond)
