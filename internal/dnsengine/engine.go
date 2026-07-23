@@ -21,6 +21,14 @@ type BlocklistChecker interface {
 	IsBlocked(domain string) (bool, error)
 }
 
+// upstreamExchanger is the subset of *UpstreamManager the engine depends on.
+// Declaring it as an interface keeps forwardUpstream testable without a live
+// upstream. *UpstreamManager satisfies it.
+type upstreamExchanger interface {
+	Exchange(q *dns.Msg, timeout time.Duration, maxRetries int) (*dns.Msg, error)
+	Close()
+}
+
 type RuntimeState struct {
 	acceptQueries atomic.Bool
 	// policyEnabled atomic.Bool
@@ -28,7 +36,7 @@ type RuntimeState struct {
 }
 
 type Engine struct {
-	upstreamManager *UpstreamManager
+	upstreamManager upstreamExchanger
 	policyEngine    *policy.Engine
 	blocklist       BlocklistChecker
 	state           *RuntimeState
@@ -36,6 +44,11 @@ type Engine struct {
 	queryLog        repositories.QueryLogRepository
 	statistics      repositories.StatisticsRepository
 	threatDetector  *threat.Detector
+
+	// serveStale enables answering from an expired cache entry on upstream failure.
+	serveStale bool
+	// cache holds recent allowed answers for serve-stale; nil when disabled.
+	cache *answerCache
 
 	// threatBlockThreshold, when > 0, turns the heuristic threat detector from
 	// log-only into enforcement: a suspicious query with ThreatScore >= threshold
@@ -105,7 +118,7 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		}
 	}
 
-	return &Engine{
+	e := &Engine{
 		upstreamManager:      mgr,
 		policyEngine:         pE,
 		state:                state,
@@ -119,7 +132,13 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		rebindProtection:     cfg.RebindProtection,
 		rateLimiter:          newRateLimiter(cfg.ClientRateLimitPerSec),
 		safeSearch:           cfg.SafeSearch,
-	}, nil
+	}
+	if cfg.ServeStale {
+		e.serveStale = true
+		e.cache = newAnswerCache(defaultCacheSize, defaultStaleFor)
+		logger.Log.Info("serve-stale enabled: expired cache answers may be served on upstream failure")
+	}
+	return e, nil
 }
 
 // isAbusedTLD reports whether the domain's final label (TLD) is in the
@@ -236,19 +255,32 @@ func (e *Engine) respondSafeSearch(w dns.ResponseWriter, r *dns.Msg, target stri
 
 func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) {
 	resp, err := e.upstreamManager.Exchange(r, 5, 2)
-	if err != nil {
-		logger.Log.Error("Upstream query failed: " + err.Error())
+	if err != nil || resp == nil {
+		if err != nil {
+			logger.Log.Error("Upstream query failed: " + err.Error())
+		} else {
+			logger.Log.Error("Upstream returned nil response for: " + domain)
+		}
+		// Serve-stale: when enabled, answer from an expired cache entry (if one
+		// exists) instead of SERVFAIL so a transient upstream blip does not take
+		// DNS down. Disabled by default, so the default behavior is unchanged.
+		if e.serveStale && e.cache != nil {
+			if ent, ok := e.cache.GetStale(cacheKey(r.Question[0])); ok {
+				logger.Log.Warnf("Serving stale answer for %s (upstream unavailable)", domain)
+				if werr := w.WriteMsg(ent.reply(r, staleTTL)); werr != nil {
+					logger.Log.Error("Failed to write stale DNS response: " + werr.Error())
+				}
+				return
+			}
+		}
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeServerFailure)
 		_ = w.WriteMsg(m)
 		return
 	}
-	if resp == nil {
-		logger.Log.Error("Upstream returned nil response for: " + domain)
-		m := new(dns.Msg)
-		m.SetRcode(r, dns.RcodeServerFailure)
-		_ = w.WriteMsg(m)
-		return
+	// Cache successful answers so they can back a future serve-stale response.
+	if e.serveStale && e.cache != nil && resp.Rcode == dns.RcodeSuccess {
+		e.cache.Put(cacheKey(r.Question[0]), resp)
 	}
 
 	// DNS rebinding protection: strip answers that map a public name to an
