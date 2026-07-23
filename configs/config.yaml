@@ -33,3 +33,13 @@ dataplane:
 
 controlplane:
   listen_addr: "0.0.0.0:8080"
+  # Optional HTTPS for the control-plane API. HTTP is the default (TLS off).
+  # Public ACME cannot issue for private-LAN names, so use either an
+  # operator-provided cert/key pair, or an auto-generated self-signed cert.
+  # tls:
+  #   # Provided cert/key (both must be set to serve HTTPS):
+  #   cert_file: "/etc/hydra/tls/server.crt"  # env: TLS_CERT_FILE
+  #   key_file: "/etc/hydra/tls/server.key"   # env: TLS_KEY_FILE
+  #   # Or auto-generate a self-signed cert on first boot:
+  #   auto_self_signed: false                 # env: TLS_AUTO_SELF_SIGNED
+  #   self_signed_dir: "/app/data/tls"        # env: TLS_SELF_SIGNED_DIR
