@@ -50,6 +50,8 @@ type Engine struct {
 	// rebindProtection, when true, strips A/AAAA answers that resolve a public
 	// name to a private/loopback/link-local IP. Default false (unchanged behaviour).
 	rebindProtection bool
+
+	rateLimiter *rateLimiter
 }
 
 func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
@@ -91,6 +93,7 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		threatBlockDryRun:    cfg.ThreatBlockDryRun,
 		abusedTLDs:           abusedTLDs,
 		rebindProtection:     cfg.RebindProtection,
+		rateLimiter:          newRateLimiter(cfg.ClientRateLimitPerSec),
 	}, nil
 }
 
@@ -229,6 +232,17 @@ func normalizeDomain(d string) string {
 	return strings.TrimSuffix(strings.ToLower(d), ".")
 }
 
+// clientIPFromAddr extracts the host portion (IP) from a net.Addr so the rate
+// limiter keys on the client IP rather than the ephemeral source port, which
+// changes on every UDP query.
+func clientIPFromAddr(addr net.Addr) string {
+	s := addr.String()
+	if host, _, err := net.SplitHostPort(s); err == nil {
+		return host
+	}
+	return s
+}
+
 // Known private/local DNS suffixes appended by routers via DHCP search domains.
 // When a router advertises a search domain (e.g., "hgu_lan", "home", "local"),
 // Windows/macOS append it to bare hostnames AND sometimes to FQDNs.
@@ -297,6 +311,19 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if !e.state.acceptQueries.Load() {
+		m := new(dns.Msg)
+		m.SetRcode(r, dns.RcodeRefused)
+		_ = w.WriteMsg(m)
+		return
+	}
+
+	// --- Per-client rate limiting (default OFF; allows all when disabled) ---
+	rlClientIP := ""
+	if addr := w.RemoteAddr(); addr != nil {
+		rlClientIP = clientIPFromAddr(addr)
+	}
+	if !e.rateLimiter.allow(rlClientIP) {
+		logger.Log.Warnf("Rate limit exceeded for client %s, refusing query", rlClientIP)
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeRefused)
 		_ = w.WriteMsg(m)
