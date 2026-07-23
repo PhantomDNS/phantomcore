@@ -43,6 +43,8 @@ func RegisterRoutes(r *gin.Engine, apiHandler *handlers.APIHandler) {
 			policies.GET("", apiHandler.ListPolicies)
 			policies.POST("", apiHandler.CreatePolicy)
 			policies.GET("/:id", apiHandler.GetPolicy)
+			policies.PUT("/:id", apiHandler.UpdatePolicy)
+			policies.PATCH("/:id", apiHandler.UpdatePolicy)
 			policies.DELETE("/:id", apiHandler.DeletePolicy)
 		}
 

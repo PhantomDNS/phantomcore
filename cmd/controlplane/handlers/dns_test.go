@@ -39,7 +39,7 @@ func newTestResolverHandler(t *testing.T) (*gin.Engine, *APIHandler) {
 
 	// DataPlaneClient is nil: handlers persist-only, apply is a no-op (documented).
 	store := repositories.Store{Resolvers: repositories.NewResolverRepo(db)}
-	h := NewAPIHandler(store, nil, nil)
+	h := NewAPIHandler(store, nil, nil, nil)
 
 	r := gin.New()
 	dns := r.Group("/api/v1/dns")

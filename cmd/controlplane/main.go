@@ -11,6 +11,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/config"
 	client "github.com/lopster568/phantomDNS/internal/grpc/controlplane"
 	"github.com/lopster568/phantomDNS/internal/inventory"
+	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/db"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 	"github.com/lopster568/phantomDNS/internal/tlsutil"
@@ -63,8 +64,24 @@ func main() {
 		}
 	}
 
+	// Initialize the in-process policy engine and seed it from storage. Policy
+	// handlers reload this snapshot immediately after each mutation so edits
+	// take effect without waiting for the dataplane's periodic DB poll. The
+	// dataplane runs its own engine over the same DB and remains authoritative
+	// for DNS resolution.
+	policyEngine := policy.NewPolicyEngine()
+	if stored, err := repos.Policies.List(); err != nil {
+		log.Printf("failed to load policies into engine: %v", err)
+	} else {
+		engPolicies := make([]policy.Policy, 0, len(stored))
+		for _, m := range stored {
+			engPolicies = append(engPolicies, repositories.ToEnginePolicy(m))
+		}
+		_ = policyEngine.LoadPolicies(engPolicies)
+	}
+
 	// Initialize Gin router
-	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory)
+	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory, policyEngine)
 	r := gin.Default()
 	r.Use(middlewares.Logger())
 

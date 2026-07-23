@@ -3,7 +3,6 @@ package main
 // SPDX-License-Identifier: GPL-3.0-or-later
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -22,7 +21,6 @@ import (
 	"github.com/lopster568/phantomDNS/internal/nrd"
 	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/db"
-	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 	"github.com/lopster568/phantomDNS/internal/watchdog"
 )
@@ -300,28 +298,11 @@ func reloadPolicies(engine *policy.Engine, filePolicies []policy.Policy, repo re
 		logger.Log.Errorf("Failed to load policies from DB: %v", err)
 	} else {
 		for _, dbp := range dbPolicies {
-			all = append(all, dbPolicyToEngine(dbp))
+			all = append(all, repositories.ToEnginePolicy(dbp))
 		}
 	}
 
 	if err := engine.LoadPolicies(all); err != nil {
 		logger.Log.Errorf("Failed to reload policy snapshot: %v", err)
-	}
-}
-
-func dbPolicyToEngine(m models.Policy) policy.Policy {
-	var domains []string
-	if m.Domains != "" {
-		_ = json.Unmarshal([]byte(m.Domains), &domains)
-	}
-	return policy.Policy{
-		ID:       m.ID,
-		Name:     m.Name,
-		Action:   m.Action,
-		Domains:  domains,
-		Priority: m.Priority,
-		Enabled:  m.Enabled,
-		Category: m.Category,
-		Redirect: m.RedirectIP,
 	}
 }
