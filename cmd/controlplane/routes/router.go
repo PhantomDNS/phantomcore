@@ -63,5 +63,12 @@ func RegisterRoutes(r *gin.Engine, apiHandler *handlers.APIHandler) {
 		{
 			devices.GET("", apiHandler.GetDevices)
 		}
+
+		// Config export/import endpoints
+		cfg := api.Group("/config")
+		{
+			cfg.GET("/export", apiHandler.ExportConfig)
+			cfg.POST("/import", apiHandler.ImportConfig)
+		}
 	}
 }
