@@ -380,7 +380,7 @@ func TestProcessDNSQuery_AbusedTLDNotInSetAllowed(t *testing.T) {
 	// Empty (pool-less) upstream manager returns SERVFAIL without a network call.
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
 	e.abusedTLDs = map[string]bool{"zip": true}
-	e.upstreamManager = &UpstreamManager{}
+	e.setUpstreamExchanger(&UpstreamManager{})
 
 	w := &mockResponseWriter{}
 	e.ProcessDNSQuery(w, newTestQuery("example.com"))
@@ -397,7 +397,7 @@ func TestProcessDNSQuery_AbusedTLDEmptySetIsOff(t *testing.T) {
 	// Empty set = feature off: a .zip domain must not be blocked.
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
 	// abusedTLDs left nil (empty).
-	e.upstreamManager = &UpstreamManager{}
+	e.setUpstreamExchanger(&UpstreamManager{})
 
 	w := &mockResponseWriter{}
 	e.ProcessDNSQuery(w, newTestQuery("example.zip"))
@@ -417,7 +417,7 @@ func TestProcessDNSQuery_AbusedTLDAllowPolicyOverrides(t *testing.T) {
 	}
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, policies)
 	e.abusedTLDs = map[string]bool{"zip": true}
-	e.upstreamManager = &UpstreamManager{}
+	e.setUpstreamExchanger(&UpstreamManager{})
 
 	w := &mockResponseWriter{}
 	e.ProcessDNSQuery(w, newTestQuery("trusted.zip"))
@@ -788,7 +788,7 @@ func TestProcessDNSQuery_SafeSearchUnmappedHost(t *testing.T) {
 	// is that there is no CNAME rewrite.
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
 	e.safeSearch = true
-	e.upstreamManager = &UpstreamManager{}
+	e.setUpstreamExchanger(&UpstreamManager{})
 
 	w := &mockResponseWriter{}
 	e.ProcessDNSQuery(w, newTestQuery("example.com"))
@@ -805,7 +805,7 @@ func TestProcessDNSQuery_SafeSearchDisabled(t *testing.T) {
 	// SafeSearch disabled (default): a mapped host must not be rewritten.
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
 	e.safeSearch = false
-	e.upstreamManager = &UpstreamManager{}
+	e.setUpstreamExchanger(&UpstreamManager{})
 
 	w := &mockResponseWriter{}
 	e.ProcessDNSQuery(w, newTestQuery("www.google.com"))
@@ -884,7 +884,7 @@ func TestProcessDNSQuery_NRDFlag_NotBlocked(t *testing.T) {
 	// which confirms the query was forwarded rather than blocked.
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
 	e.nrd = nrd.NewWithSet(nrd.NewSet([]string{"freshdomain.com"}), false) // flag mode
-	e.upstreamManager = &UpstreamManager{}                                 // no resolvers, no network
+	e.setUpstreamExchanger(&UpstreamManager{})                                 // no resolvers, no network
 
 	w := &mockResponseWriter{}
 	e.ProcessDNSQuery(w, newTestQuery("freshdomain.com"))
@@ -903,7 +903,7 @@ func TestProcessDNSQuery_NRDFlag_NotBlocked(t *testing.T) {
 func TestProcessDNSQuery_NRDNotListed_Passes(t *testing.T) {
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
 	e.nrd = nrd.NewWithSet(nrd.NewSet([]string{"freshdomain.com"}), true) // block mode
-	e.upstreamManager = &UpstreamManager{}
+	e.setUpstreamExchanger(&UpstreamManager{})
 
 	w := &mockResponseWriter{}
 	e.ProcessDNSQuery(w, newTestQuery("well-established.com"))
@@ -920,7 +920,7 @@ func TestProcessDNSQuery_NRDNoFeed_Inert(t *testing.T) {
 	// A checker with no feed configured must be inert: the domain passes through.
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
 	e.nrd = nrd.New(nrd.Config{}) // no FeedURL, no data loaded
-	e.upstreamManager = &UpstreamManager{}
+	e.setUpstreamExchanger(&UpstreamManager{})
 
 	w := &mockResponseWriter{}
 	e.ProcessDNSQuery(w, newTestQuery("freshdomain.com"))

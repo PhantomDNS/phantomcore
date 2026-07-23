@@ -143,11 +143,12 @@ func TestCacheKey_DistinctByType(t *testing.T) {
 // --- forwardUpstream serve-stale behavior ---
 
 func staleEngine(ex upstreamExchanger, enabled bool, c *answerCache) *Engine {
-	return &Engine{
-		upstreamManager: ex,
-		serveStale:      enabled,
-		cache:           c,
+	e := &Engine{
+		serveStale: enabled,
+		cache:      c,
 	}
+	e.setUpstreamExchanger(ex)
+	return e
 }
 
 func TestForwardUpstream_ServesStaleOnError(t *testing.T) {

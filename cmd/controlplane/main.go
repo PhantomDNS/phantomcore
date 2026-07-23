@@ -49,6 +49,20 @@ func main() {
 	deviceInventory.Start()
 	defer deviceInventory.Stop()
 
+	// Seed the editable resolver set from config on first boot (migrates the
+	// historical config-only list into storage), then apply the persisted set
+	// to the dataplane so runtime matches the source of truth.
+	if err := repos.Resolvers.SeedDefaults(config.DefaultConfig.DataPlane.UpstreamResolvers); err != nil {
+		log.Printf("warning: failed to seed default resolvers: %v", err)
+	}
+	if addrs, err := repos.Resolvers.Addresses(); err != nil {
+		log.Printf("warning: failed to load resolvers: %v", err)
+	} else if len(addrs) > 0 {
+		if err := c.SetUpstreamResolvers(addrs); err != nil {
+			log.Printf("warning: failed to apply resolvers to dataplane: %v", err)
+		}
+	}
+
 	// Initialize Gin router
 	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory)
 	r := gin.Default()

@@ -41,3 +41,22 @@ func (s *StatusService) SetAcceptQueries(
 		Ok: true,
 	}, nil
 }
+
+// SetUpstreamResolvers applies a new ordered upstream resolver set to the
+// running DNS engine (I-003 live apply).
+func (s *StatusService) SetUpstreamResolvers(
+	ctx context.Context,
+	req *pb.SetUpstreamResolversRequest,
+) (*pb.SetUpstreamResolversResponse, error) {
+
+	if err := s.engine.SetUpstreamResolvers(req.Resolvers); err != nil {
+		return &pb.SetUpstreamResolversResponse{
+			Ok:    false,
+			Error: err.Error(),
+		}, nil
+	}
+
+	return &pb.SetUpstreamResolversResponse{
+		Ok: true,
+	}, nil
+}
