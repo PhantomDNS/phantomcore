@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lopster568/phantomDNS/internal/logger"
 	"gopkg.in/yaml.v3"
@@ -59,6 +60,28 @@ type DataPlaneConfig struct {
 	// DNS0x20 enables DNS 0x20 case-randomization on outbound upstream queries
 	// (anti-spoofing hardening). Default false = behaviour unchanged.
 	DNS0x20 bool `yaml:"dns_0x20"`
+
+	// WatchdogInterval is the self-heal watchdog probe cadence as a Go duration
+	// (e.g. "30s"). Empty, "0" or "off" disables the watchdog.
+	WatchdogInterval string `yaml:"watchdog_interval"`
+	// WatchdogFailureThreshold is the number of consecutive unhealthy probes
+	// before the watchdog attempts recovery. <= 0 uses the watchdog default.
+	WatchdogFailureThreshold int `yaml:"watchdog_failure_threshold"`
+}
+
+// WatchdogIntervalDuration parses WatchdogInterval into a duration. It returns 0
+// (watchdog disabled) when the value is empty, "0", "off", or unparseable.
+func (c DataPlaneConfig) WatchdogIntervalDuration() time.Duration {
+	s := strings.TrimSpace(c.WatchdogInterval)
+	if s == "" || s == "0" || strings.EqualFold(s, "off") {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		logger.Log.Warnf("Invalid WATCHDOG_INTERVAL %q, disabling watchdog", c.WatchdogInterval)
+		return 0
+	}
+	return d
 }
 
 type ControlPlaneConfig struct {
@@ -136,11 +159,13 @@ const DefaultSelfSignedDir = "/app/data/tls"
 func defaultConfig() *Config {
 	return &Config{
 		DataPlane: DataPlaneConfig{
-			ListenAddr:              "0.0.0.0:1053",
-			UpstreamResolvers:       []string{"8.8.8.8:53", "1.1.1.1:53"},
-			BlocklistUpdateInterval: "6h",
-			MetricsAddr:             "0.0.0.0:9153",
-			BlocklistHealthInterval: "1h",
+			ListenAddr:               "0.0.0.0:1053",
+			UpstreamResolvers:        []string{"8.8.8.8:53", "1.1.1.1:53"},
+			BlocklistUpdateInterval:  "6h",
+			MetricsAddr:              "0.0.0.0:9153",
+			BlocklistHealthInterval:  "1h",
+			WatchdogInterval:         "30s",
+			WatchdogFailureThreshold: 3,
 			GRPCServer: GRPCServerConfig{
 				Port:       50051,
 				ListenAddr: "localhost:50051",
@@ -233,6 +258,16 @@ var DefaultConfig = func() *Config {
 		cfg.DataPlane.MetricsAddr = "0.0.0.0:9153"
 	}
 	applyTLSEnv(&cfg.ControlPlane.TLS)
+	if v := os.Getenv("WATCHDOG_INTERVAL"); v != "" {
+		cfg.DataPlane.WatchdogInterval = v
+	}
+	if v := os.Getenv("WATCHDOG_FAILURE_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.DataPlane.WatchdogFailureThreshold = n
+		} else {
+			logger.Log.Warnf("Invalid WATCHDOG_FAILURE_THRESHOLD %q, using default", v)
+		}
+	}
 	return cfg
 }()
 
