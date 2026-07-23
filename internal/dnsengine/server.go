@@ -95,8 +95,12 @@ func (s *Server) Run() {
 
 	logger.Log.Info("entering drain mode")
 	s.engine.state.acceptQueries.Store(false)
-	udpSrv.Shutdown()
-	tcpSrv.Shutdown()
+	if err := udpSrv.Shutdown(); err != nil {
+		logger.Log.Warn("UDP server shutdown error: ", err)
+	}
+	if err := tcpSrv.Shutdown(); err != nil {
+		logger.Log.Warn("TCP server shutdown error: ", err)
+	}
 
 	logger.Log.Info("exited")
 }

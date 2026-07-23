@@ -130,7 +130,9 @@ func TestCreateResolver_Success(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	var list []Resolver
-	json.Unmarshal(env.Data, &list)
+	if err := json.Unmarshal(env.Data, &list); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
 	if len(list) != 1 {
 		t.Fatalf("expected 1 persisted resolver, got %d", len(list))
 	}
@@ -148,7 +150,9 @@ func TestCreateResolver_DefaultsNameAndProtocol(t *testing.T) {
 		t.Fatalf("expected 201, got %d (body=%s)", w.Code, w.Body.String())
 	}
 	var res Resolver
-	json.Unmarshal(env.Data, &res)
+	if err := json.Unmarshal(env.Data, &res); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
 	if res.Name != "1.1.1.1:53" {
 		t.Errorf("expected name to default to address, got %q", res.Name)
 	}
@@ -195,7 +199,9 @@ func TestCreateResolver_InvalidAddress(t *testing.T) {
 	// Nothing should have been persisted.
 	_, env := doJSON(t, r, http.MethodGet, "/api/v1/dns/resolvers", "")
 	var list []Resolver
-	json.Unmarshal(env.Data, &list)
+	if err := json.Unmarshal(env.Data, &list); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
 	if len(list) != 0 {
 		t.Errorf("expected no resolvers persisted after invalid creates, got %d", len(list))
 	}
@@ -233,7 +239,9 @@ func TestUpdateResolver_EditAddress(t *testing.T) {
 		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
 	}
 	var updated Resolver
-	json.Unmarshal(env.Data, &updated)
+	if err := json.Unmarshal(env.Data, &updated); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
 	if updated.Address != "9.9.9.9:53" {
 		t.Errorf("expected updated address 9.9.9.9:53, got %q", updated.Address)
 	}
@@ -285,7 +293,9 @@ func TestUpdateResolver_Reorder(t *testing.T) {
 	// List must now return the second resolver first (ordered by position asc).
 	_, env := doJSON(t, r, http.MethodGet, "/api/v1/dns/resolvers", "")
 	var list []Resolver
-	json.Unmarshal(env.Data, &list)
+	if err := json.Unmarshal(env.Data, &list); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
 	if len(list) != 2 {
 		t.Fatalf("expected 2 resolvers, got %d", len(list))
 	}
@@ -310,7 +320,9 @@ func TestDeleteResolver(t *testing.T) {
 	// List is empty afterwards.
 	_, listEnv := doJSON(t, r, http.MethodGet, "/api/v1/dns/resolvers", "")
 	var list []Resolver
-	json.Unmarshal(listEnv.Data, &list)
+	if err := json.Unmarshal(listEnv.Data, &list); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
 	if len(list) != 0 {
 		t.Errorf("expected 0 resolvers after delete, got %d", len(list))
 	}
