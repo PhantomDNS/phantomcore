@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/dnsengine"
 	dataplanegrpc "github.com/lopster568/phantomDNS/internal/grpc/dataplane"
 	"github.com/lopster568/phantomDNS/internal/logger"
+	"github.com/lopster568/phantomDNS/internal/metrics/promexport"
 	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/db"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
@@ -103,6 +105,24 @@ func main() {
 		logger.Log.Info("Starting dataplane gRPC server on :50051")
 		if err := grpcSrv.Start(); err != nil {
 			logger.Log.Fatalf("gRPC server failed: %v", err)
+		}
+	}()
+
+	// 6b. Prometheus metrics HTTP server.
+	// Metrics are in-process here (engine.Metrics()), so /metrics is exposed
+	// directly on the dataplane rather than bridged over gRPC.
+	go func() {
+		metricsAddr := config.DefaultConfig.DataPlane.MetricsAddr
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promexport.Handler(engine.Metrics()))
+		metricsSrv := &http.Server{
+			Addr:              metricsAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		logger.Log.Infof("Starting dataplane metrics server on %s/metrics", metricsAddr)
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Log.Errorf("metrics server failed: %v", err)
 		}
 	}()
 
