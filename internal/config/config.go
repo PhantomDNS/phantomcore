@@ -37,6 +37,10 @@ type DataPlaneConfig struct {
 	// AbusedTLDs is the set of high-abuse TLDs (e.g. "zip", "mov", "top") to
 	// block on the default allow path. Empty (the default) disables the feature.
 	AbusedTLDs []string `yaml:"abused_tlds"`
+
+	// RebindProtection rejects upstream answers that map a public name to a
+	// private/loopback/link-local IP (DNS rebinding defense). Default false.
+	RebindProtection bool `yaml:"rebind_protection"`
 }
 
 type ControlPlaneConfig struct {
@@ -100,6 +104,13 @@ var DefaultConfig = func() *Config {
 	}
 	if v := os.Getenv("ABUSED_TLDS"); v != "" {
 		cfg.DataPlane.AbusedTLDs = parseAbusedTLDs(v)
+	}
+	if v := os.Getenv("REBIND_PROTECTION"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.DataPlane.RebindProtection = b
+		} else {
+			logger.Log.Warnf("Invalid REBIND_PROTECTION value %q: %v", v, err)
+		}
 	}
 	return cfg
 }()
