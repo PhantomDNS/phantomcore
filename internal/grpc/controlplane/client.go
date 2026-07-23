@@ -56,3 +56,21 @@ func (c *Client) SetAcceptQueries(enabled bool) error {
 func (c *Client) GetLiveQueryMetrics(ctx context.Context) (*v1.LiveQueryMetrics, error) {
 	return c.metrics.GetLiveQueryMetrics(ctx, &emptypb.Empty{})
 }
+
+// SetUpstreamResolvers applies an ordered upstream resolver set to the
+// dataplane, mirroring the apply-via-gRPC pattern used by SetAcceptQueries.
+func (c *Client) SetUpstreamResolvers(resolvers []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	resp, err := c.status.SetUpstreamResolvers(ctx, &pb.SetUpstreamResolversRequest{
+		Resolvers: resolvers,
+	})
+	if err != nil {
+		return err
+	}
+	if resp != nil && !resp.Ok {
+		return fmt.Errorf("dataplane rejected resolver update: %s", resp.Error)
+	}
+	return nil
+}

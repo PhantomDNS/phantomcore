@@ -11,6 +11,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/config"
 	client "github.com/lopster568/phantomDNS/internal/grpc/controlplane"
 	"github.com/lopster568/phantomDNS/internal/inventory"
+	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/db"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 	"github.com/lopster568/phantomDNS/internal/tlsutil"
@@ -49,8 +50,38 @@ func main() {
 	deviceInventory.Start()
 	defer deviceInventory.Stop()
 
+	// Seed the editable resolver set from config on first boot (migrates the
+	// historical config-only list into storage), then apply the persisted set
+	// to the dataplane so runtime matches the source of truth.
+	if err := repos.Resolvers.SeedDefaults(config.DefaultConfig.DataPlane.UpstreamResolvers); err != nil {
+		log.Printf("warning: failed to seed default resolvers: %v", err)
+	}
+	if addrs, err := repos.Resolvers.Addresses(); err != nil {
+		log.Printf("warning: failed to load resolvers: %v", err)
+	} else if len(addrs) > 0 {
+		if err := c.SetUpstreamResolvers(addrs); err != nil {
+			log.Printf("warning: failed to apply resolvers to dataplane: %v", err)
+		}
+	}
+
+	// Initialize the in-process policy engine and seed it from storage. Policy
+	// handlers reload this snapshot immediately after each mutation so edits
+	// take effect without waiting for the dataplane's periodic DB poll. The
+	// dataplane runs its own engine over the same DB and remains authoritative
+	// for DNS resolution.
+	policyEngine := policy.NewPolicyEngine()
+	if stored, err := repos.Policies.List(); err != nil {
+		log.Printf("failed to load policies into engine: %v", err)
+	} else {
+		engPolicies := make([]policy.Policy, 0, len(stored))
+		for _, m := range stored {
+			engPolicies = append(engPolicies, repositories.ToEnginePolicy(m))
+		}
+		_ = policyEngine.LoadPolicies(engPolicies)
+	}
+
 	// Initialize Gin router
-	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory)
+	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory, policyEngine)
 	r := gin.Default()
 	r.Use(middlewares.Logger())
 

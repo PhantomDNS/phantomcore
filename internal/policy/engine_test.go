@@ -24,7 +24,7 @@ func TestNormalizeDomain(t *testing.T) {
 
 func TestEvaluate_AllowByDefault(t *testing.T) {
 	e := NewPolicyEngine()
-	d, err := e.Evaluate("unknown.com")
+	d, err := e.Evaluate("unknown.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestEvaluate_BlockExactDomain(t *testing.T) {
 		{ID: "block-ads", Action: "BLOCK", Priority: 100, Domains: []string{"ads.example.com"}},
 	})
 
-	d, err := e.Evaluate("ads.example.com")
+	d, err := e.Evaluate("ads.example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestEvaluate_CaseInsensitive(t *testing.T) {
 		{ID: "p1", Action: "BLOCK", Priority: 100, Domains: []string{"ADS.Example.COM"}},
 	})
 
-	d, err := e.Evaluate("ads.example.com")
+	d, err := e.Evaluate("ads.example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestEvaluate_TrailingDotNormalized(t *testing.T) {
 		{ID: "p1", Action: "BLOCK", Priority: 100, Domains: []string{"blocked.com"}},
 	})
 
-	d, err := e.Evaluate("blocked.com.")
+	d, err := e.Evaluate("blocked.com.", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestEvaluate_Redirect(t *testing.T) {
 		{ID: "redir", Action: "REDIRECT", Priority: 100, Redirect: "1.2.3.4", Domains: []string{"redirect.me"}},
 	})
 
-	d, err := e.Evaluate("redirect.me")
+	d, err := e.Evaluate("redirect.me", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestEvaluate_HighestPriorityWins(t *testing.T) {
 		{ID: "high", Action: "BLOCK", Priority: 200, Domains: []string{"test.com"}},
 	})
 
-	d, err := e.Evaluate("test.com")
+	d, err := e.Evaluate("test.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestEvaluate_TieBreakByID(t *testing.T) {
 		{ID: "aaa", Action: "BLOCK", Priority: 100, Domains: []string{"tie.com"}},
 	})
 
-	d, err := e.Evaluate("tie.com")
+	d, err := e.Evaluate("tie.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestEvaluate_BloomNegativeShortCircuit(t *testing.T) {
 	})
 
 	// Domain not in bloom filter should be allowed without hitting exact map
-	d, err := e.Evaluate("notblocked.com")
+	d, err := e.Evaluate("notblocked.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestEvaluate_MultipleDomainsSamePolicy(t *testing.T) {
 	})
 
 	for _, domain := range []string{"a.com", "b.com", "c.com"} {
-		d, err := e.Evaluate(domain)
+		d, err := e.Evaluate(domain, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -171,7 +171,7 @@ func TestEvaluate_EmptyPolicies(t *testing.T) {
 	e := NewPolicyEngine()
 	e.LoadPolicies([]Policy{})
 
-	d, err := e.Evaluate("anything.com")
+	d, err := e.Evaluate("anything.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestEvaluate_BlockByRegex(t *testing.T) {
 		{ID: "rx-block", Action: "BLOCK", Priority: 100, Regexes: []string{`.*\.doubleclick\.net$`}},
 	})
 
-	d, err := e.Evaluate("ads.doubleclick.net")
+	d, err := e.Evaluate("ads.doubleclick.net", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestEvaluate_BlockByRegex(t *testing.T) {
 	}
 
 	// Non-matching domain should fall through to ALLOW.
-	d, err = e.Evaluate("safe.example.org")
+	d, err = e.Evaluate("safe.example.org", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestEvaluate_RegexAllowOverridesByPriority(t *testing.T) {
 		{ID: "rx-allow", Action: "ALLOW", Priority: 100, Regexes: []string{`.*\.tracking\.com$`}},
 	})
 
-	d, err := e.Evaluate("beacon.tracking.com")
+	d, err := e.Evaluate("beacon.tracking.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestEvaluate_RegexTieBreakByID(t *testing.T) {
 		{ID: "aaa-rx", Action: "BLOCK", Priority: 50, Regexes: []string{`^tie\.rx$`}},
 	})
 
-	d, err := e.Evaluate("tie.rx")
+	d, err := e.Evaluate("tie.rx", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestEvaluate_WildcardMatchesSubdomains(t *testing.T) {
 
 	// Wildcard matches the base domain and any depth of subdomain.
 	for _, domain := range []string{"example.com", "sub.example.com", "a.b.example.com"} {
-		d, err := e.Evaluate(domain)
+		d, err := e.Evaluate(domain, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +281,7 @@ func TestEvaluate_WildcardMatchesSubdomains(t *testing.T) {
 
 	// Unrelated domains must not match.
 	for _, domain := range []string{"notexample.com", "example.com.evil.net", "other.org"} {
-		d, err := e.Evaluate(domain)
+		d, err := e.Evaluate(domain, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -298,7 +298,7 @@ func TestEvaluate_WildcardPriority(t *testing.T) {
 		{ID: "wild-allow", Action: "ALLOW", Priority: 100, Domains: []string{"*.corp.com"}},
 	})
 
-	d, err := e.Evaluate("intra.corp.com")
+	d, err := e.Evaluate("intra.corp.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestEvaluate_ExactWinsOverRegex(t *testing.T) {
 		{ID: "rx-all", Action: "ALLOW", Priority: 999, Regexes: []string{`.*`}},
 	})
 
-	d, err := e.Evaluate("exact.com")
+	d, err := e.Evaluate("exact.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestEvaluate_ExactWinsOverRegex(t *testing.T) {
 	}
 
 	// A domain with no exact match falls through to the regex slow path.
-	d, err = e.Evaluate("anything.else")
+	d, err = e.Evaluate("anything.else", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestEvaluate_InvalidRegexDoesNotCrash(t *testing.T) {
 	})
 
 	// The invalid regex is skipped; querying anything must not panic.
-	d, err := e.Evaluate("harmless.com")
+	d, err := e.Evaluate("harmless.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestEvaluate_InvalidRegexDoesNotCrash(t *testing.T) {
 	}
 
 	// The valid regex alongside it still matches.
-	d, err = e.Evaluate("good.net")
+	d, err = e.Evaluate("good.net", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ func TestEvaluate_ExactStillWorksWithDynamicRulesPresent(t *testing.T) {
 		{ID: "rx", Action: "BLOCK", Priority: 100, Regexes: []string{`^evil\.io$`}},
 	})
 
-	d, err := e.Evaluate("ads.example.com")
+	d, err := e.Evaluate("ads.example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}

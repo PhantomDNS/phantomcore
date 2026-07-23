@@ -49,11 +49,13 @@ func migrate(db *gorm.DB) error {
 		&models.DomainPolicy{},
 		&models.Action{},
 		&models.Category{},
+		&models.Collection{},
 		&models.Statistics{},
 		&models.SystemState{},
 		&models.BlocklistSource{},
 		&models.BlocklistSnapshot{},
 		&models.BlocklistEntry{},
 		&models.AdminCredential{},
+		&models.Resolver{},
 	)
 }

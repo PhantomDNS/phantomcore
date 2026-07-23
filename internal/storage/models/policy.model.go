@@ -11,8 +11,22 @@ type Policy struct {
 	Action      string `gorm:"not null"` // BLOCK, ALLOW, REDIRECT
 	RedirectIP  string
 	Domains     string `gorm:"type:text"` // JSON array stored as text
+	Regexes     string `gorm:"type:text"` // JSON array stored as text
+	// ClientCIDRs scopes the policy to specific clients by IP/CIDR, stored as a
+	// JSON array of strings. Empty (the migration default) means the policy is
+	// unscoped and applies to all clients, so AutoMigrate adds the column
+	// safely to existing rows without changing their behavior (I-014).
+	ClientCIDRs string `gorm:"type:text"`
 	Priority    int    `gorm:"default:0"`
 	Enabled     bool   `gorm:"default:true"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+
+	// Optional schedule (I-038). All-empty means always active, so existing
+	// rows keep their behaviour after AutoMigrate adds these nullable columns.
+	ScheduleDays  string `gorm:"type:text"` // JSON array of day tokens; empty = every day
+	ScheduleStart string // local "HH:MM" window start; empty = no window
+	ScheduleEnd   string // local "HH:MM" window end
+	Timezone      string // IANA timezone name; empty = UTC
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

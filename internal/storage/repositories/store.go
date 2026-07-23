@@ -11,7 +11,10 @@ type Store struct {
 	Statistics  StatisticsRepository
 	SystemState SystemStateRepository
 	Policies    PolicyRepository
+	Categories  CategoryRepository
+	Collections CollectionRepository
 	Auth        AuthRepository
+	Resolvers   ResolverRepository
 
 	// DB is the shared gorm handle backing every repository above. It is
 	// exposed so multi-entity operations (e.g. atomic config import) can run
@@ -27,7 +30,10 @@ func NewStore(db *gorm.DB) *Store {
 		Statistics:  NewGormStatisticsRepo(db),
 		SystemState: NewSystemStateRepo(db),
 		Policies:    NewPolicyRepo(db),
+		Categories:  NewCategoryRepo(db),
+		Collections: NewCollectionRepo(db),
 		Auth:        NewAuthRepo(db),
+		Resolvers:   NewResolverRepo(db),
 		DB:          db,
 	}
 }

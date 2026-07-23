@@ -53,7 +53,7 @@ func newConfigTestServer(t *testing.T) (*gin.Engine, *repositories.Store) {
 	store := repositories.NewStore(db)
 	// DataPlaneClient and Inventory are nil: import persists and skips the
 	// best-effort reload; handlers must treat a nil Inventory as empty.
-	h := NewAPIHandler(*store, nil, nil)
+	h := NewAPIHandler(*store, nil, nil, nil)
 
 	r := gin.New()
 	api := r.Group("/api/v1")

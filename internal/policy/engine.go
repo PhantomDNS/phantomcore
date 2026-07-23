@@ -1,16 +1,32 @@
 package policy
 
 import (
+	"net"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 type Engine struct {
 	snapshot atomic.Value // holds *Snapshot
+	// now supplies the current time for schedule evaluation (I-038). It is
+	// injectable so tests can make scheduled-policy behaviour deterministic.
+	// Only scheduled policies consult it.
+	now func() time.Time
 }
 
 func NewPolicyEngine() *Engine {
-	e := &Engine{}
+	return NewPolicyEngineWithClock(nil)
+}
+
+// NewPolicyEngineWithClock builds an engine with an injectable clock. Passing
+// nil uses time.Now. Only schedule evaluation reads the clock; the fast path
+// for unscheduled policies never does.
+func NewPolicyEngineWithClock(clock func() time.Time) *Engine {
+	if clock == nil {
+		clock = time.Now
+	}
+	e := &Engine{now: clock}
 	e.snapshot.Store(buildSnapshot([]Policy{}))
 	return e
 }
@@ -22,48 +38,77 @@ func (e *Engine) LoadPolicies(policies []Policy) error {
 	return nil
 }
 
-// Evaluate returns the decision for given domain and context.
+// Evaluate returns the decision for a given domain and the querying client.
+//
+// clientIP is the source address of the query (may be "host:port" as handed
+// out by the dataplane, or a bare IP; empty when unknown). It is used to apply
+// per-client policy scoping (I-014): a policy with a non-empty client scope is
+// considered only for clients inside its ranges, while unscoped policies apply
+// to everyone.
+//
 // Evaluation order:
 //   - normalize domain
 //   - exact-match/Bloom fast path (walks up parent domains) => decision
+//   - scheduled policies only count while inside their active window (I-038)
+//   - policies are further filtered to those in scope for this client (I-014)
 //   - regex + wildcard slow path (only on exact miss) => decision
 //   - otherwise => ALLOW
 //
 // The exact-match fast path returns immediately when it hits, so an exact rule
 // always wins over regex/wildcard rules. Within the regex/wildcard slow path,
 // the usual priority ordering applies (higher priority wins; tie => lexicographic ID).
-func (e *Engine) Evaluate(domain string) (Decision, error) {
+func (e *Engine) Evaluate(domain string, clientIP string) (Decision, error) {
 	d := normalizeDomain(domain)
 	snap := e.snapshot.Load().(*PolicySnapshot)
+	client := parseClientIP(clientIP)
+	now := e.now()
 
 	// Check exact match first, then walk up parent domains for subdomain matching.
 	// e.g., www.godaddy.com → check www.godaddy.com, then godaddy.com.
-	// This is the hot path and is intentionally left untouched.
 	parts := strings.Split(d, ".")
 	for i := 0; i < len(parts)-1; i++ {
 		candidate := strings.Join(parts[i:], ".")
 		if snap.Bloom != nil && !snap.Bloom.TestString(candidate) {
 			continue
 		}
-		if pols, ok := snap.Exact[candidate]; ok && len(pols) > 0 {
-			best := pickHighestPriority(pols)
+		pols, ok := snap.Exact[candidate]
+		if !ok || len(pols) == 0 {
+			continue
+		}
+		// Drop scheduled policies that are outside their active window (I-038).
+		// A policy inactive right now is treated as if it did not match, so
+		// evaluation keeps walking up to any always-on parent-domain rule.
+		active := filterActive(pols, now)
+		if len(active) == 0 {
+			continue
+		}
+		// Keep only policies whose client scope matches this client (I-014).
+		// Unscoped policies always match (fast path in matchesClient). If
+		// nothing is in scope at this level, keep walking up to parent domains
+		// rather than stopping — a scoped rule on a subdomain must not mask a
+		// broader rule on its parent for a different client.
+		best := pickHighestPriorityScoped(snap, active, client)
+		if best != nil {
 			return policyDecision(best), nil
 		}
 	}
 
 	// Slow path: no exact match. Evaluate wildcard and compiled-regex rules,
-	// respecting the same priority ordering as the exact path.
-	if best := matchDynamic(snap, d); best != nil {
+	// respecting the same priority ordering, schedule, and client-scope rules
+	// as the exact path.
+	if best := matchDynamic(snap, d, now, client); best != nil {
 		return policyDecision(best), nil
 	}
 
 	return Decision{Action: ActionAllow}, nil
 }
 
-// matchDynamic returns the highest-priority policy whose wildcard or compiled
-// regex rule matches d, or nil when nothing matches. A wildcard "*.example.com"
-// matches the base domain ("example.com") and any subdomain of it.
-func matchDynamic(snap *PolicySnapshot, d string) *Policy {
+// matchDynamic returns the highest-priority active, in-scope policy whose
+// wildcard or compiled regex rule matches d, or nil when nothing matches. A
+// wildcard "*.example.com" matches the base domain ("example.com") and any
+// subdomain of it. Scheduled policies (I-038) and client scoping (I-014) are
+// filtered the same as the exact-match path above.
+func matchDynamic(snap *PolicySnapshot, d string, now time.Time, client net.IP) *Policy {
 	var candidates []*Policy
 	for _, w := range snap.Wildcards {
 		if d == w.base || strings.HasSuffix(d, "."+w.base) {
@@ -78,20 +123,46 @@ func matchDynamic(snap *PolicySnapshot, d string) *Policy {
 	if len(candidates) == 0 {
 		return nil
 	}
-	return pickHighestPriority(candidates)
+	return pickHighestPriorityScoped(snap, filterActive(candidates, now), client)
 }
 
-// pickHighestPriority returns the matching policy with highest priority (deterministic).
-func pickHighestPriority(candidates []*Policy) *Policy {
+// filterActive returns the policies that are active at the given instant. When
+// none of the candidates carry a schedule it returns the input slice unchanged
+// (no allocation), preserving the fast path for unscheduled policies.
+func filterActive(pols []*Policy, now time.Time) []*Policy {
+	scheduled := false
+	for _, p := range pols {
+		if p.sched != nil {
+			scheduled = true
+			break
+		}
+	}
+	if !scheduled {
+		return pols
+	}
+
+	out := make([]*Policy, 0, len(pols))
+	for _, p := range pols {
+		if p.sched.active(now) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// pickHighestPriorityScoped selects the highest-priority policy from candidates
+// that also applies to the given client, or nil if none are in scope.
+func pickHighestPriorityScoped(snap *PolicySnapshot, candidates []*Policy, client net.IP) *Policy {
 	var best *Policy
 	for _, p := range candidates {
+		if !snap.matchesClient(p, client) {
+			continue
+		}
 		if best == nil || p.Priority > best.Priority {
 			best = p
-		} else if p.Priority == best.Priority {
+		} else if p.Priority == best.Priority && p.ID < best.ID {
 			// deterministic tie-breaker: lexicographic ID
-			if p.ID < best.ID {
-				best = p
-			}
+			best = p
 		}
 	}
 	return best

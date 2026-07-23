@@ -18,7 +18,9 @@ type BlocklistRepository interface {
 	ListSources() ([]models.BlocklistSource, error)
 	GetSource(id string) (*models.BlocklistSource, error)
 	CreateSource(src *models.BlocklistSource) error
+	UpdateSource(src *models.BlocklistSource) error
 	DeleteSource(id string) error
+	DeleteEntriesBySource(sourceID string) error
 	CountEntriesBySource(sourceID string) (int64, error)
 	CountEntriesGroupedBySource() (map[string]int64, error)
 	GetRecentSnapshots(sourceID string, limit int) ([]models.BlocklistSnapshot, error)
@@ -116,6 +118,37 @@ func (r *BlocklistRepo) GetSource(id string) (*models.BlocklistSource, error) {
 
 func (r *BlocklistRepo) CreateSource(src *models.BlocklistSource) error {
 	return r.db.Create(src).Error
+}
+
+// UpdateSource persists changes to an existing blocklist source's metadata.
+// It uses Save (full-field update) so a false Enabled toggle is not skipped as a
+// zero value the way a struct-based Updates would be.
+func (r *BlocklistRepo) UpdateSource(src *models.BlocklistSource) error {
+	src.UpdatedAt = time.Now()
+	result := r.db.Save(src)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// DeleteEntriesBySource removes all entries and snapshots for a source while keeping
+// the source row. Used when a source is disabled or re-fetched so the dataplane's live
+// blocklist view (which queries entries directly) reflects the change immediately.
+func (r *BlocklistRepo) DeleteEntriesBySource(sourceID string) error {
+	tx := r.db.Begin()
+	defer tx.Rollback() // no-op after commit
+
+	if err := tx.Where("source_id = ?", sourceID).Delete(&models.BlocklistEntry{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("source_id = ?", sourceID).Delete(&models.BlocklistSnapshot{}).Error; err != nil {
+		return err
+	}
+	return tx.Commit().Error
 }
 
 func (r *BlocklistRepo) DeleteSource(id string) error {

@@ -121,7 +121,7 @@ func TestForwardUpstream_GeoBlockMode(t *testing.T) {
 	// response without forwarding the real answer. A stub upstream keeps this
 	// hermetic (no network).
 	e := newTestEngine(nil, nil)
-	e.upstreamManager = newStubUpstream(mustA(t, "evil.com. 60 IN A 203.0.113.10"))
+	e.setUpstreamExchanger(newStubUpstream(mustA(t, "evil.com. 60 IN A 203.0.113.10")))
 	e.geo = geoip.NewFilter(mockGeoResolver{asn: 64500, country: "RU"}, []uint{64500}, nil, true)
 
 	w := &mockResponseWriter{}
@@ -141,7 +141,7 @@ func TestForwardUpstream_GeoBlockMode(t *testing.T) {
 func TestForwardUpstream_GeoFlagModeForwards(t *testing.T) {
 	// Flag mode: the real answer is still returned even on a match.
 	e := newTestEngine(nil, nil)
-	e.upstreamManager = newStubUpstream(mustA(t, "cdn.com. 60 IN A 203.0.113.10"))
+	e.setUpstreamExchanger(newStubUpstream(mustA(t, "cdn.com. 60 IN A 203.0.113.10")))
 	e.geo = geoip.NewFilter(mockGeoResolver{asn: 64500, country: "RU"}, []uint{64500}, nil, false)
 
 	w := &mockResponseWriter{}
@@ -167,7 +167,7 @@ func TestForwardUpstream_GeoFlagModeForwards(t *testing.T) {
 
 func TestForwardUpstream_GeoCleanAnswerPasses(t *testing.T) {
 	e := newTestEngine(nil, nil)
-	e.upstreamManager = newStubUpstream(mustA(t, "good.com. 60 IN A 192.0.2.5"))
+	e.setUpstreamExchanger(newStubUpstream(mustA(t, "good.com. 60 IN A 192.0.2.5")))
 	e.geo = geoip.NewFilter(mockGeoResolver{asn: 15169, country: "US"}, []uint{64500}, []string{"RU"}, true)
 
 	w := &mockResponseWriter{}

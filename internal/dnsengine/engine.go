@@ -2,11 +2,13 @@
 package dnsengine
 
 import (
+	"errors"
 	"net"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/lopster568/phantomDNS/internal/alert"
 	"github.com/lopster568/phantomDNS/internal/config"
 	"github.com/lopster568/phantomDNS/internal/geoip"
 	"github.com/lopster568/phantomDNS/internal/logger"
@@ -21,6 +23,11 @@ import (
 type BlocklistChecker interface {
 	IsBlocked(domain string) (bool, error)
 }
+
+// errNoUpstreamResolvers is returned by forwardUpstream when no upstream
+// exchanger has been configured yet (e.g. before the first SetUpstreamResolvers
+// call, or if construction failed).
+var errNoUpstreamResolvers = errors.New("no upstream resolvers configured")
 
 // upstreamExchanger is the subset of *UpstreamManager the engine depends on.
 // Declaring it as an interface keeps forwardUpstream testable without a live
@@ -48,7 +55,11 @@ type RuntimeState struct {
 }
 
 type Engine struct {
-	upstreamManager upstreamExchanger
+	// upstreamManager is swapped atomically so the resolver set can be
+	// reconfigured live (I-003) without racing in-flight query forwarding. It
+	// is held as the upstreamExchanger interface (rather than *UpstreamManager
+	// directly) so tests can substitute a mock exchanger via setUpstreamExchanger.
+	upstreamManager atomic.Pointer[upstreamExchanger]
 	policyEngine    *policy.Engine
 	blocklist       BlocklistChecker
 	nrd             NRDChecker
@@ -96,6 +107,12 @@ type Engine struct {
 	rateLimiter *rateLimiter
 
 	safeSearch bool
+
+	// alerter tracks repeated C2/malware hits per client and fires infected-
+	// device alerts (I-045). Off by default (nil sink, no resolver) unless
+	// DEVICE_ALERT_THRESHOLD is configured; always non-nil, so callers never
+	// need a nil check before Attach*.
+	alerter *alert.Alerter
 }
 
 // safeSearchTargets maps well-known search/video hostnames to their
@@ -134,6 +151,33 @@ func (e *Engine) AttachGeoFilter(f *geoip.Filter) {
 // engine. Passing a checker with no feed configured leaves NRD inert.
 func (e *Engine) AttachNRDChecker(n NRDChecker) {
 	e.nrd = n
+}
+
+// AttachDeviceResolver wires a device resolver (e.g. the LAN inventory) into
+// the infected-device alerter so alerts are enriched with MAC and hostname.
+// Safe to call with a nil alerter.
+func (e *Engine) AttachDeviceResolver(r alert.DeviceResolver) {
+	if e.alerter != nil {
+		e.alerter.SetResolver(r)
+	}
+}
+
+// AttachAlertSink wires an optional side-channel (e.g. a webhook) that receives
+// each fired infected-device alert. Safe to call with a nil alerter or sink.
+func (e *Engine) AttachAlertSink(fn func(alert.Alert)) {
+	if e.alerter != nil && fn != nil {
+		e.alerter.SetSink(fn)
+	}
+}
+
+// Alerts returns the current set of suspected-compromised devices. It is the
+// status accessor for infected-device alerting and is empty when the feature
+// is disabled.
+func (e *Engine) Alerts() []alert.Alert {
+	if e.alerter == nil {
+		return nil
+	}
+	return e.alerter.Suspected()
 }
 
 func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *policy.Engine) (*Engine, error) {
@@ -180,7 +224,6 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 	detector.SetTyposquatBlock(cfg.TyposquatBlock)
 
 	e := &Engine{
-		upstreamManager:      mgr,
 		policyEngine:         pE,
 		state:                state,
 		metrics:              qm,
@@ -196,7 +239,12 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		safeSearch:           cfg.SafeSearch,
 		nodLedger:            ledger,
 		nodBlock:             cfg.NODBlock,
+		// Infected-device alerting (I-045). Off by default: enabled only when a
+		// positive DEVICE_ALERT_THRESHOLD is configured. A device resolver is
+		// attached later via AttachDeviceResolver.
+		alerter: alert.NewAlerter(alert.ConfigFromEnv(), nil, nil),
 	}
+	e.setUpstreamExchanger(mgr)
 	if cfg.ServeStale {
 		e.serveStale = true
 		e.cache = newAnswerCache(defaultCacheSize, defaultStaleFor)
@@ -232,10 +280,39 @@ func (e *Engine) SetAcceptQueries(enabled bool) {
 	e.state.acceptQueries.Store(enabled)
 }
 
+// SetUpstreamResolvers rebuilds the upstream manager from the given ordered
+// resolver addresses and swaps it in atomically. This is the live-apply path
+// for I-003: control-plane resolver edits take effect on query forwarding
+// without a dataplane restart.
+//
+// The previous manager is closed after the swap. New queries always read the
+// new manager via the atomic pointer; a query that loaded the old pointer just
+// before the swap may observe a closed pool and fail (it is retried by the
+// engine on the next query). This brief, bounded disruption is acceptable for
+// an infrequent configuration change.
+func (e *Engine) SetUpstreamResolvers(resolvers []string) error {
+	mgr, err := NewUpstreamManager(resolvers, 4)
+	if err != nil {
+		return err
+	}
+	var ex upstreamExchanger = mgr
+	if old := e.upstreamManager.Swap(&ex); old != nil {
+		(*old).Close()
+	}
+	return nil
+}
+
+// setUpstreamExchanger stores ex as the engine's upstream exchanger. Production
+// callers use SetUpstreamResolvers; tests use this directly to substitute a
+// mock exchanger without a live upstream.
+func (e *Engine) setUpstreamExchanger(ex upstreamExchanger) {
+	e.upstreamManager.Store(&ex)
+}
+
 // Cleanup the resources used by the Engine
 func (e *Engine) Shutdown() {
-	if e.upstreamManager != nil {
-		e.upstreamManager.Close()
+	if p := e.upstreamManager.Load(); p != nil {
+		(*p).Close()
 	}
 	e.exporter.Close() // nil-safe
 }
@@ -342,7 +419,14 @@ type forwardOutcome struct {
 // filter's block decision). The returned forwardOutcome tells the caller
 // whether fast-flux and/or GeoIP detectors fired.
 func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) forwardOutcome {
-	resp, err := e.upstreamManager.Exchange(r, 5, 2)
+	p := e.upstreamManager.Load()
+	var resp *dns.Msg
+	var err error
+	if p == nil {
+		err = errNoUpstreamResolvers
+	} else {
+		resp, err = (*p).Exchange(r, 5, 2)
+	}
 	if err != nil || resp == nil {
 		if err != nil {
 			logger.Log.Error("Upstream query failed: " + err.Error())
@@ -551,6 +635,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 			logger.Log.Infof("Blocked by blocklist: %s", domainName)
 			e.logQuery(domainName, clientIP, "block", "blocklist", threatResult)
 			e.metrics.RecordBlocked()
+			e.recordBlocked(clientIP, domainName)
 			e.respondBlocked(w, r, domainName, "blocklist")
 			success = true
 			return
@@ -575,7 +660,9 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	// --- Step 2: Evaluate policy ---
-	decision, err := e.policyEngine.Evaluate(domainName)
+	// Thread the client IP so per-client scoped policies (I-014) apply only
+	// to matching clients; unscoped policies still apply to everyone.
+	decision, err := e.policyEngine.Evaluate(domainName, clientIP)
 	if err != nil {
 		logger.Log.Error("Failed to evaluate policy: " + err.Error())
 		e.logQuery(domainName, clientIP, "error", "", threatResult)
@@ -590,6 +677,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		logger.Log.Infof("Blocking via policy %s", decision.PolicyID)
 		e.logQuery(domainName, clientIP, "block", decision.PolicyID, threatResult)
 		e.metrics.RecordBlocked()
+		e.recordBlocked(clientIP, domainName)
 		e.respondBlocked(w, r, domainName, decision.PolicyID)
 		success = true
 
@@ -787,6 +875,29 @@ func (e *Engine) logQuery(domain, clientIP, action, reason string, tr threat.Res
 			}
 		}
 	}()
+}
+
+// recordBlocked feeds one blocked resolution into the infected-device alerter,
+// keyed by the client's IP (port stripped). It is a no-op when alerting is
+// disabled. Malware/C2 blocklist hits and policy-deny hits both count.
+func (e *Engine) recordBlocked(clientAddr, domain string) {
+	if e.alerter == nil {
+		return
+	}
+	e.alerter.RecordBlocked(clientIPOnly(clientAddr), domain)
+}
+
+// clientIPOnly strips the transport port from a "host:port" remote address,
+// returning the bare IP used as the inventory key. Inputs without a port are
+// returned unchanged.
+func clientIPOnly(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func (e *Engine) Metrics() *metrics.QueryMetrics {
