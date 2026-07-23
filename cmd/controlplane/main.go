@@ -19,6 +19,8 @@ import (
 )
 
 func main() {
+	config.LogCustodyMode()
+
 	// Initialize database
 	dbPath := "/app/data/phantomdns.db"
 	if p := os.Getenv("PHANTOM_DB"); p != "" {

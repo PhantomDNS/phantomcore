@@ -14,6 +14,15 @@ import (
 type Config struct {
 	DataPlane    DataPlaneConfig    `yaml:"dataplane"`
 	ControlPlane ControlPlaneConfig `yaml:"controlplane"`
+
+	// LocalOnly is the data-custody master switch. When true, every
+	// non-resolution outbound ("phone-home") network call MUST be
+	// short-circuited. Default false.
+	//
+	// Do NOT read this field directly from outbound code paths; consult the
+	// LocalOnly() accessor (env override aware) and AssertLocalOnlyRespected()
+	// guard instead. See internal/config/local_only.go for the full contract.
+	LocalOnly bool `yaml:"local_only"`
 }
 
 type GRPCServerConfig struct {
