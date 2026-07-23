@@ -11,6 +11,8 @@ type Store struct {
 	Statistics  StatisticsRepository
 	SystemState SystemStateRepository
 	Policies    PolicyRepository
+	Categories  CategoryRepository
+	Collections CollectionRepository
 	Auth        AuthRepository
 	Resolvers   ResolverRepository
 
@@ -28,6 +30,8 @@ func NewStore(db *gorm.DB) *Store {
 		Statistics:  NewGormStatisticsRepo(db),
 		SystemState: NewSystemStateRepo(db),
 		Policies:    NewPolicyRepo(db),
+		Categories:  NewCategoryRepo(db),
+		Collections: NewCollectionRepo(db),
 		Auth:        NewAuthRepo(db),
 		Resolvers:   NewResolverRepo(db),
 		DB:          db,
