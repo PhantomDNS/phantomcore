@@ -145,6 +145,11 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		exporter = nil
 	}
 
+	// Typosquat/homoglyph detector: an empty brand watchlist is a no-op inside
+	// Analyze, so this is always safe to construct.
+	detector := threat.NewDetectorWithBrands(cfg.TyposquatBrands)
+	detector.SetTyposquatBlock(cfg.TyposquatBlock)
+
 	e := &Engine{
 		upstreamManager:      mgr,
 		policyEngine:         pE,
@@ -152,7 +157,7 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		metrics:              qm,
 		queryLog:             repos.QueryLogs,
 		statistics:           repos.Statistics,
-		threatDetector:       threat.NewDetector(),
+		threatDetector:       detector,
 		exporter:             exporter,
 		threatBlockThreshold: cfg.ThreatBlockThreshold,
 		threatBlockDryRun:    cfg.ThreatBlockDryRun,
@@ -585,6 +590,14 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		action := "allow"
 		reason := ""
 		if threatResult.IsSuspicious {
+			// Opt-in blocking (e.g. typosquat block mode): drop instead of forward.
+			if threatResult.Block {
+				logger.Log.Warnf("Suspicious domain blocked: %s (score=%.2f, method=%s)", domainName, threatResult.ThreatScore, threatResult.DetectionMethod)
+				e.logQuery(domainName, clientIP, "block", threatResult.DetectionMethod, threatResult)
+				e.respondBlocked(w, r, domainName, threatResult.DetectionMethod)
+				success = true
+				return
+			}
 			action = "flagged"
 			reason = threatResult.DetectionMethod
 			logger.Log.Warnf("Suspicious domain allowed: %s (score=%.2f, method=%s)", domainName, threatResult.ThreatScore, threatResult.DetectionMethod)

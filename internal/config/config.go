@@ -103,6 +103,12 @@ type DataPlaneConfig struct {
 	// SyslogAddr accepts "udp://host:514" or "tcp://host:514".
 	SyslogAddr      string `yaml:"syslog_addr"`
 	EventWebhookURL string `yaml:"event_webhook_url"`
+
+	// TyposquatBrands is the protected-brand watchlist for typosquat/homoglyph
+	// detection (registrable domains, e.g. "paypal.com"). Empty => feature OFF.
+	TyposquatBrands []string `yaml:"typosquat_brands"`
+	// TyposquatBlock blocks typosquat hits instead of only flagging them.
+	TyposquatBlock bool `yaml:"typosquat_block"`
 }
 
 // WatchdogIntervalDuration parses WatchdogInterval into a duration. It returns 0
@@ -335,6 +341,15 @@ var DefaultConfig = func() *Config {
 	if webhook := os.Getenv("EVENT_WEBHOOK_URL"); webhook != "" {
 		cfg.DataPlane.EventWebhookURL = webhook
 	}
+	if brands := os.Getenv("TYPOSQUAT_BRANDS"); brands != "" {
+		cfg.DataPlane.TyposquatBrands = splitAndTrim(brands)
+	}
+	if block := os.Getenv("TYPOSQUAT_BLOCK"); block != "" {
+		switch strings.ToLower(strings.TrimSpace(block)) {
+		case "1", "true", "yes", "on":
+			cfg.DataPlane.TyposquatBlock = true
+		}
+	}
 	return cfg
 }()
 
@@ -374,6 +389,18 @@ func applyTLSEnv(t *TLSConfig) {
 	if t.SelfSignedDir == "" {
 		t.SelfSignedDir = DefaultSelfSignedDir
 	}
+}
+
+// splitAndTrim splits a comma-separated list, trimming whitespace and dropping
+// empty entries.
+func splitAndTrim(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func configPath() string {
