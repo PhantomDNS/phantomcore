@@ -20,6 +20,7 @@ type BlocklistRepository interface {
 	DeleteSource(id string) error
 	CountEntriesBySource(sourceID string) (int64, error)
 	CountEntriesGroupedBySource() (map[string]int64, error)
+	GetRecentSnapshots(sourceID string, limit int) ([]models.BlocklistSnapshot, error)
 }
 
 // Implementation
@@ -131,6 +132,20 @@ func (r *BlocklistRepo) CountEntriesBySource(sourceID string) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.BlocklistEntry{}).Where("source_id = ?", sourceID).Count(&count).Error
 	return count, err
+}
+
+// GetRecentSnapshots returns up to limit snapshots for a source, most recent
+// first. A non-positive limit returns all snapshots. Ordering is by creation
+// time then ID so ties (snapshots written in the same instant) stay
+// deterministic, which the health checker relies on for its collapse baseline.
+func (r *BlocklistRepo) GetRecentSnapshots(sourceID string, limit int) ([]models.BlocklistSnapshot, error) {
+	var snaps []models.BlocklistSnapshot
+	q := r.db.Where("source_id = ?", sourceID).Order("created_at desc, id desc")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	err := q.Find(&snaps).Error
+	return snaps, err
 }
 
 // CountEntriesGroupedBySource returns domain counts keyed by source ID in a single query.
