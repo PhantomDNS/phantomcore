@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lopster568/phantomDNS/internal/blocklist"
+	"github.com/lopster568/phantomDNS/internal/blocklist/bundle"
 	"github.com/lopster568/phantomDNS/internal/config"
 	"github.com/lopster568/phantomDNS/internal/diskhealth"
 	"github.com/lopster568/phantomDNS/internal/dnsengine"
@@ -45,6 +46,23 @@ func main() {
 
 	// 3. Blocklist Engine — load from DB sources, refresh periodically
 	blEngine := blocklist.NewEngine(repos.Blocklist)
+
+	// Offline-first: seed the checker from the embedded bundle when the DB has
+	// no blocklist snapshot yet, so the dataplane blocks well-known ad/malware
+	// domains immediately on first boot with no internet. This runs before the
+	// DNS server starts and only fires when nothing has ever been loaded; it
+	// never overwrites data fetched by the online refresh below.
+	if config.BundledBlocklistEnabled() {
+		if seeded, err := bundle.SeedIfEmpty(repos.Blocklist); err != nil {
+			logger.Log.Warnf("Bundled blocklist seed failed: %v", err)
+		} else if seeded {
+			logger.Log.Info("Seeded blocklist from embedded offline bundle (no snapshot present)")
+		} else {
+			logger.Log.Info("Bundled blocklist seed skipped (blocklist snapshot already present)")
+		}
+	} else {
+		logger.Log.Info("Bundled blocklist seeding disabled via BUNDLED_BLOCKLIST")
+	}
 
 	// Initial load in background so DNS starts immediately
 	go func() {

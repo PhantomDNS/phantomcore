@@ -14,6 +14,7 @@ type BlocklistRepository interface {
 	SaveSnapshotWithEntries(src models.BlocklistSource, checksum string, entries []models.BlocklistEntry) (models.BlocklistSnapshot, error)
 	GetAll() ([]string, error)
 	IsBlocked(domain string) (bool, error)
+	CountSnapshots() (int64, error)
 	ListSources() ([]models.BlocklistSource, error)
 	GetSource(id string) (*models.BlocklistSource, error)
 	CreateSource(src *models.BlocklistSource) error
@@ -59,6 +60,15 @@ func (r *BlocklistRepo) GetAll() ([]string, error) {
 		return nil, err
 	}
 	return domains, nil
+}
+
+// CountSnapshots returns the total number of blocklist snapshots persisted.
+// It is used to decide whether the offline bundle should seed the DB: a count
+// of zero means no blocklist data has ever been loaded (bundled or fetched).
+func (r *BlocklistRepo) CountSnapshots() (int64, error) {
+	var count int64
+	err := r.db.Model(&models.BlocklistSnapshot{}).Count(&count).Error
+	return count, err
 }
 
 func (r *BlocklistRepo) SaveSnapshotWithEntries(src models.BlocklistSource, checksum string, entries []models.BlocklistEntry) (models.BlocklistSnapshot, error) {
