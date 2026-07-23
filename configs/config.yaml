@@ -19,6 +19,9 @@ dataplane:
   # Optional per-client DNS query rate limit (queries/sec per client IP).
   # 0 disables it (default). Env override: CLIENT_RATE_LIMIT_PER_SEC.
   client_rate_limit_per_sec: 0
+  # Rewrite well-known search/video hosts to their enforced-safe targets
+  # (Google/Bing/DuckDuckGo SafeSearch, YouTube Restricted Mode). Env: SAFE_SEARCH.
+  safe_search: false
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"
