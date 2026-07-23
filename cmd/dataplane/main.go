@@ -26,6 +26,7 @@ import (
 
 func main() {
 	logger.Log.Info("Starting PhantomDNS Data Plane...")
+	config.LogCustodyMode()
 
 	// 1. Initialize DB
 	dbPath := "/app/data/phantomdns.db"
