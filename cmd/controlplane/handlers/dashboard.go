@@ -7,10 +7,10 @@ import (
 )
 
 type DashboardSummaryData struct {
-	TotalQueries      uint64 `json:"total_queries"`
-	BlockedQueries    uint64 `json:"blocked_queries"`
-	AllowedQueries    uint64 `json:"allowed_queries"`
-	RedirectedQueries uint64 `json:"redirected_queries"`
+	TotalQueries      uint64  `json:"total_queries"`
+	BlockedQueries    uint64  `json:"blocked_queries"`
+	AllowedQueries    uint64  `json:"allowed_queries"`
+	RedirectedQueries uint64  `json:"redirected_queries"`
 	BlockRatePercent  float64 `json:"block_rate_percent"`
 }
 

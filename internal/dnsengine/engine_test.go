@@ -34,7 +34,7 @@ func (w *mockResponseWriter) Write([]byte) (int, error) { return 0, nil }
 func (w *mockResponseWriter) Close() error              { return nil }
 func (w *mockResponseWriter) TsigStatus() error         { return nil }
 func (w *mockResponseWriter) TsigTimersOnly(bool)       {}
-func (w *mockResponseWriter) Hijack()                    {}
+func (w *mockResponseWriter) Hijack()                   {}
 
 func newTestQuery(domain string) *dns.Msg {
 	m := new(dns.Msg)
