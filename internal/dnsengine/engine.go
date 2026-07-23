@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lopster568/phantomDNS/internal/config"
+	"github.com/lopster568/phantomDNS/internal/geoip"
 	"github.com/lopster568/phantomDNS/internal/logger"
 	"github.com/lopster568/phantomDNS/internal/metrics"
 	"github.com/lopster568/phantomDNS/internal/policy"
@@ -21,6 +22,25 @@ type BlocklistChecker interface {
 	IsBlocked(domain string) (bool, error)
 }
 
+// upstreamExchanger is the subset of *UpstreamManager the engine depends on.
+// Declaring it as an interface keeps forwardUpstream testable without a live
+// upstream. *UpstreamManager satisfies it.
+type upstreamExchanger interface {
+	Exchange(q *dns.Msg, timeout time.Duration, maxRetries int) (*dns.Msg, error)
+	Close()
+}
+
+// NRDChecker reports whether a domain appears on the operator-configured
+// newly-registered-domain (NRD) feed, and whether matches should be blocked or
+// merely flagged. It is kept entirely separate from user blocklists. A nil
+// checker (or one with no feed loaded) is inert.
+type NRDChecker interface {
+	// IsListed reports whether the domain or its registrable parent is on the feed.
+	IsListed(domain string) bool
+	// BlockMode reports whether listed domains are blocked (true) or flagged (false).
+	BlockMode() bool
+}
+
 type RuntimeState struct {
 	acceptQueries atomic.Bool
 	// policyEnabled atomic.Bool
@@ -28,14 +48,36 @@ type RuntimeState struct {
 }
 
 type Engine struct {
-	upstreamManager *UpstreamManager
+	upstreamManager upstreamExchanger
 	policyEngine    *policy.Engine
 	blocklist       BlocklistChecker
+	nrd             NRDChecker
 	state           *RuntimeState
 	metrics         *metrics.QueryMetrics
 	queryLog        repositories.QueryLogRepository
 	statistics      repositories.StatisticsRepository
 	threatDetector  *threat.Detector
+	exporter        *Exporter
+	// geo is nil when ASN/GeoIP answer filtering is disabled (the default, no
+	// database configured). When set, resolved answer IPs on the allow path are
+	// evaluated against it.
+	geo *geoip.Filter
+
+	// fastFlux is nil when fast-flux detection is disabled (the default). When
+	// set, upstream answers on the allow path are fed to it and tripping domains
+	// are flagged (never blocked).
+	fastFlux *fastFluxTracker
+
+	// serveStale enables answering from an expired cache entry on upstream failure.
+	serveStale bool
+	// cache holds recent allowed answers for serve-stale; nil when disabled.
+	cache *answerCache
+
+	// Newly-observed-domain (NOD) detection. nodLedger is nil when NOD is
+	// disabled (window <= 0). When set, nodBlock decides whether a newly
+	// observed domain is blocked (true) or merely flagged and forwarded (false).
+	nodLedger *nodLedger
+	nodBlock  bool
 
 	// threatBlockThreshold, when > 0, turns the heuristic threat detector from
 	// log-only into enforcement: a suspicious query with ThreatScore >= threshold
@@ -82,6 +124,18 @@ func (e *Engine) AttachBlocklistChecker(b BlocklistChecker) {
 	e.blocklist = b
 }
 
+// AttachGeoFilter enables optional ASN/GeoIP answer filtering. A nil filter
+// (the default) leaves the engine's allow path unchanged and adds no overhead.
+func (e *Engine) AttachGeoFilter(f *geoip.Filter) {
+	e.geo = f
+}
+
+// AttachNRDChecker wires the newly-registered-domain feed checker onto the
+// engine. Passing a checker with no feed configured leaves NRD inert.
+func (e *Engine) AttachNRDChecker(n NRDChecker) {
+	e.nrd = n
+}
+
 func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *policy.Engine) (*Engine, error) {
 	mgr, err := NewUpstreamManager(cfg.UpstreamResolvers, 4, WithDNS0x20(cfg.DNS0x20))
 	state := &RuntimeState{}
@@ -105,21 +159,59 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		}
 	}
 
-	return &Engine{
+	// Newly-observed-domain ledger: only enabled when a positive window is set.
+	var ledger *nodLedger
+	if cfg.NODWindowHours > 0 {
+		ledger = newNODLedger(time.Duration(cfg.NODWindowHours)*time.Hour, nodDefaultMaxEntries, nil)
+		logger.Log.Infof("NOD detection enabled: window=%dh block=%v", cfg.NODWindowHours, cfg.NODBlock)
+	}
+
+	// Event export is optional and defaults to OFF. A nil exporter is a valid
+	// no-op; a bad target is logged and skipped inside NewExporter.
+	exporter, err := NewExporter(cfg.SyslogAddr, cfg.EventWebhookURL)
+	if err != nil {
+		logger.Log.Warnf("event export disabled: %v", err)
+		exporter = nil
+	}
+
+	// Typosquat/homoglyph detector: an empty brand watchlist is a no-op inside
+	// Analyze, so this is always safe to construct.
+	detector := threat.NewDetectorWithBrands(cfg.TyposquatBrands)
+	detector.SetTyposquatBlock(cfg.TyposquatBlock)
+
+	e := &Engine{
 		upstreamManager:      mgr,
 		policyEngine:         pE,
 		state:                state,
 		metrics:              qm,
 		queryLog:             repos.QueryLogs,
 		statistics:           repos.Statistics,
-		threatDetector:       threat.NewDetector(),
+		threatDetector:       detector,
+		exporter:             exporter,
 		threatBlockThreshold: cfg.ThreatBlockThreshold,
 		threatBlockDryRun:    cfg.ThreatBlockDryRun,
 		abusedTLDs:           abusedTLDs,
 		rebindProtection:     cfg.RebindProtection,
 		rateLimiter:          newRateLimiter(cfg.ClientRateLimitPerSec),
 		safeSearch:           cfg.SafeSearch,
-	}, nil
+		nodLedger:            ledger,
+		nodBlock:             cfg.NODBlock,
+	}
+	if cfg.ServeStale {
+		e.serveStale = true
+		e.cache = newAnswerCache(defaultCacheSize, defaultStaleFor)
+		logger.Log.Info("serve-stale enabled: expired cache answers may be served on upstream failure")
+	}
+	if cfg.FastFluxDetection {
+		e.fastFlux = newFastFluxTracker(
+			cfg.FastFluxIPThreshold,
+			cfg.FastFluxTTLMaxSec,
+			defaultFastFluxWindow,
+			defaultFastFluxMaxDomains,
+			nil,
+		)
+	}
+	return e, nil
 }
 
 // isAbusedTLD reports whether the domain's final label (TLD) is in the
@@ -145,6 +237,7 @@ func (e *Engine) Shutdown() {
 	if e.upstreamManager != nil {
 		e.upstreamManager.Close()
 	}
+	e.exporter.Close() // nil-safe
 }
 
 func (e *Engine) respondBlocked(w dns.ResponseWriter, r *dns.Msg, domain, reason string) {
@@ -234,21 +327,58 @@ func (e *Engine) respondSafeSearch(w dns.ResponseWriter, r *dns.Msg, target stri
 	}
 }
 
-func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) {
+// forwardOutcome reports what happened while forwarding a query upstream, for
+// the caller to fold into its logging/action decision. Fast-flux is always
+// advisory (flag-only); GeoIP is flag-only unless GEOIP_BLOCK is configured.
+type forwardOutcome struct {
+	fastFlux   bool
+	geoMatched bool
+	geoBlocked bool
+	geoReason  string
+}
+
+// forwardUpstream forwards the query to upstream and writes the response back
+// (subject to rebind-protection filtering and, when configured, the GeoIP
+// filter's block decision). The returned forwardOutcome tells the caller
+// whether fast-flux and/or GeoIP detectors fired.
+func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string) forwardOutcome {
 	resp, err := e.upstreamManager.Exchange(r, 5, 2)
-	if err != nil {
-		logger.Log.Error("Upstream query failed: " + err.Error())
+	if err != nil || resp == nil {
+		if err != nil {
+			logger.Log.Error("Upstream query failed: " + err.Error())
+		} else {
+			logger.Log.Error("Upstream returned nil response for: " + domain)
+		}
+		// Serve-stale: when enabled, answer from an expired cache entry (if one
+		// exists) instead of SERVFAIL so a transient upstream blip does not take
+		// DNS down. Disabled by default, so the default behavior is unchanged.
+		if e.serveStale && e.cache != nil {
+			if ent, ok := e.cache.GetStale(cacheKey(r.Question[0])); ok {
+				logger.Log.Warnf("Serving stale answer for %s (upstream unavailable)", domain)
+				if werr := w.WriteMsg(ent.reply(r, staleTTL)); werr != nil {
+					logger.Log.Error("Failed to write stale DNS response: " + werr.Error())
+				}
+				return forwardOutcome{}
+			}
+		}
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeServerFailure)
 		_ = w.WriteMsg(m)
-		return
+		return forwardOutcome{}
 	}
-	if resp == nil {
-		logger.Log.Error("Upstream returned nil response for: " + domain)
-		m := new(dns.Msg)
-		m.SetRcode(r, dns.RcodeServerFailure)
-		_ = w.WriteMsg(m)
-		return
+	// Cache successful answers so they can back a future serve-stale response.
+	if e.serveStale && e.cache != nil && resp.Rcode == dns.RcodeSuccess {
+		e.cache.Put(cacheKey(r.Question[0]), resp)
+	}
+
+	// Fast-flux detection (flag-only, never blocks). Inspect the answer's A/AAAA
+	// records before writing the response back.
+	outcome := forwardOutcome{}
+	if e.fastFlux != nil {
+		if ips, ttl, ok := extractAnswerIPs(resp); ok && e.fastFlux.observe(domain, ips, ttl) {
+			outcome.fastFlux = true
+			logger.Log.Warnf("Fast-flux suspected: %s (distinct-IP churn with low TTL within window)", domain)
+		}
 	}
 
 	// DNS rebinding protection: strip answers that map a public name to an
@@ -262,14 +392,31 @@ func (e *Engine) forwardUpstream(w dns.ResponseWriter, r *dns.Msg, domain string
 			qtype := r.Question[0].Qtype
 			if len(kept) == 0 && (qtype == dns.TypeA || qtype == dns.TypeAAAA) {
 				e.respondBlocked(w, r, domain, "rebind")
-				return
+				return outcome
 			}
+		}
+	}
+
+	// Optional ASN/GeoIP answer filtering. Disabled (e.geo nil) unless a
+	// database is configured, keeping the original zero-overhead fast path.
+	if e.geo != nil {
+		if d := e.geo.Evaluate(answerIPs(resp)); d.Matched {
+			outcome.geoMatched = true
+			outcome.geoReason = d.Reason
+			if d.Block {
+				outcome.geoBlocked = true
+				logger.Log.Infof("Blocking via GeoIP filter: %s (%s)", domain, d.Reason)
+				e.respondBlocked(w, r, domain, "geoip")
+				return outcome
+			}
+			logger.Log.Warnf("GeoIP flagged answer for %s: %s", domain, d.Reason)
 		}
 	}
 
 	if err := w.WriteMsg(resp); err != nil {
 		logger.Log.Error("Failed to write DNS response: " + err.Error())
 	}
+	return outcome
 }
 
 // normalizeDomain lowercases and strips the trailing dot from a DNS FQDN.
@@ -403,7 +550,25 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		} else if blocked {
 			logger.Log.Infof("Blocked by blocklist: %s", domainName)
 			e.logQuery(domainName, clientIP, "block", "blocklist", threatResult)
+			e.metrics.RecordBlocked()
 			e.respondBlocked(w, r, domainName, "blocklist")
+			success = true
+			return
+		}
+	}
+
+	// --- Step 1.5: Newly-registered-domain (NRD) feed ---
+	// The NRD set is kept entirely separate from user blocklists. In block mode a
+	// match is treated like a blocklist hit and short-circuits here; in flag mode
+	// the query continues and is flagged on the allow path below. Inert when no
+	// feed is configured.
+	nrdListed := false
+	if e.nrd != nil {
+		nrdListed = e.nrd.IsListed(domainName)
+		if nrdListed && e.nrd.BlockMode() {
+			logger.Log.Infof("Blocked by NRD feed: %s", domainName)
+			e.logQuery(domainName, clientIP, "block", "nrd", threatResult)
+			e.respondBlocked(w, r, domainName, "nrd")
 			success = true
 			return
 		}
@@ -424,6 +589,7 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 	case policy.ActionDeny:
 		logger.Log.Infof("Blocking via policy %s", decision.PolicyID)
 		e.logQuery(domainName, clientIP, "block", decision.PolicyID, threatResult)
+		e.metrics.RecordBlocked()
 		e.respondBlocked(w, r, domainName, decision.PolicyID)
 		success = true
 
@@ -473,20 +639,125 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 			}
 		}
 
+		// Newly-observed-domain (NOD) detection runs only on the allow path, so
+		// it never overrides an explicit block/redirect decided above. observe()
+		// records the domain on first sight and reports whether it is new.
+		nodNew := e.nodLedger != nil && e.nodLedger.observe(domainName)
+		if nodNew && e.nodBlock {
+			logger.Log.Infof("Blocking newly-observed domain: %s", domainName)
+			e.logQuery(domainName, clientIP, "block", "nod", threatResult)
+			e.respondBlocked(w, r, domainName, "nod")
+			success = true
+			return
+		}
+		if nodNew {
+			// Flag-only mode: annotate as suspicious and forward normally.
+			threatResult.IsSuspicious = true
+			if threatResult.DetectionMethod == "" {
+				threatResult.DetectionMethod = "nod"
+			}
+			if threatResult.Reason == "" {
+				threatResult.Reason = "newly observed domain (first seen within NOD window)"
+			}
+		}
+
 		action := "allow"
 		reason := ""
 		if threatResult.IsSuspicious {
+			// Opt-in blocking (e.g. typosquat block mode): drop instead of forward.
+			if threatResult.Block {
+				logger.Log.Warnf("Suspicious domain blocked: %s (score=%.2f, method=%s)", domainName, threatResult.ThreatScore, threatResult.DetectionMethod)
+				e.logQuery(domainName, clientIP, "block", threatResult.DetectionMethod, threatResult)
+				e.respondBlocked(w, r, domainName, threatResult.DetectionMethod)
+				success = true
+				return
+			}
 			action = "flagged"
 			reason = threatResult.DetectionMethod
 			logger.Log.Warnf("Suspicious domain allowed: %s (score=%.2f, method=%s)", domainName, threatResult.ThreatScore, threatResult.DetectionMethod)
+		} else if nrdListed {
+			// Flag mode: forward the query but mark it as newly-registered.
+			threatResult.IsSuspicious = true
+			threatResult.DetectionMethod = "nrd"
+			threatResult.Reason = "newly-registered domain (on NRD feed)"
+			action = "flagged"
+			reason = threatResult.DetectionMethod
+			logger.Log.Warnf("Newly-registered domain allowed (flagged): %s", domainName)
+		}
+		// Forward first so the fast-flux heuristic and the optional GeoIP filter
+		// can inspect the answer, then log — a tripped domain is flagged/blocked
+		// based on which detector fired.
+		outcome := e.forwardUpstream(w, r, domainName)
+		if outcome.fastFlux {
+			action = "flagged"
+			if !threatResult.IsSuspicious {
+				threatResult.IsSuspicious = true
+				threatResult.DetectionMethod = "fast-flux"
+				threatResult.Reason = "fast-flux: distinct-IP churn with low TTL"
+			}
+			reason = threatResult.DetectionMethod
+		}
+		if outcome.geoMatched {
+			threatResult = enrichThreat(threatResult, outcome.geoReason)
+			reason = threatResult.DetectionMethod
+			if outcome.geoBlocked {
+				action = "block"
+			} else {
+				action = "flagged"
+			}
 		}
 		e.logQuery(domainName, clientIP, action, reason, threatResult)
-		e.forwardUpstream(w, r, domainName)
 		success = true
 	}
 }
 
+// answerIPs extracts the A and AAAA record IPs from a DNS response.
+func answerIPs(resp *dns.Msg) []net.IP {
+	if resp == nil {
+		return nil
+	}
+	ips := make([]net.IP, 0, len(resp.Answer))
+	for _, rr := range resp.Answer {
+		switch v := rr.(type) {
+		case *dns.A:
+			ips = append(ips, v.A)
+		case *dns.AAAA:
+			ips = append(ips, v.AAAA)
+		}
+	}
+	return ips
+}
+
+// enrichThreat folds a GeoIP match into a threat result so it is logged as
+// suspicious without clobbering an existing heuristic detection.
+func enrichThreat(tr threat.Result, reason string) threat.Result {
+	tr.IsSuspicious = true
+	if tr.DetectionMethod == "" {
+		tr.DetectionMethod = "geoip"
+	}
+	if tr.Reason == "" {
+		tr.Reason = reason
+	}
+	if tr.ThreatScore == 0 {
+		tr.ThreatScore = 0.6
+	}
+	return tr
+}
+
 func (e *Engine) logQuery(domain, clientIP, action, reason string, tr threat.Result) {
+	// Export the event to external sinks (syslog/webhook) if enabled.
+	// Non-blocking with drop-on-full; a nil exporter is a no-op.
+	e.exporter.Export(Event{
+		Timestamp:       time.Now().UTC(),
+		Domain:          domain,
+		ClientIP:        clientIP,
+		Action:          action,
+		IsSuspicious:    tr.IsSuspicious,
+		ThreatScore:     tr.ThreatScore,
+		DetectionMethod: tr.DetectionMethod,
+		ThreatReason:    tr.Reason,
+	})
+
 	if e.queryLog == nil {
 		return
 	}

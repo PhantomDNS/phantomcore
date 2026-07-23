@@ -24,6 +24,11 @@ func NewHTTPFetcher() *HTTPFetcher {
 }
 
 // Fetch returns body bytes, etag string, and error.
+//
+// Custody note (LOCAL_ONLY / I-061): this outbound request is ALLOWED even
+// under LOCAL_ONLY. Pulling operator-configured blocklist sources is a core
+// filtering function, not a phone-home, so it is intentionally NOT gated by
+// config.LocalOnly(). See internal/config/local_only.go for the contract.
 func (h *HTTPFetcher) Fetch(ctx context.Context, src parser.SourceConfig, knownETag string) ([]byte, string, error) {
 	var body []byte
 	var etag string

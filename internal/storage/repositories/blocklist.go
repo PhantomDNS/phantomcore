@@ -14,12 +14,14 @@ type BlocklistRepository interface {
 	SaveSnapshotWithEntries(src models.BlocklistSource, checksum string, entries []models.BlocklistEntry) (models.BlocklistSnapshot, error)
 	GetAll() ([]string, error)
 	IsBlocked(domain string) (bool, error)
+	CountSnapshots() (int64, error)
 	ListSources() ([]models.BlocklistSource, error)
 	GetSource(id string) (*models.BlocklistSource, error)
 	CreateSource(src *models.BlocklistSource) error
 	DeleteSource(id string) error
 	CountEntriesBySource(sourceID string) (int64, error)
 	CountEntriesGroupedBySource() (map[string]int64, error)
+	GetRecentSnapshots(sourceID string, limit int) ([]models.BlocklistSnapshot, error)
 }
 
 // Implementation
@@ -58,6 +60,15 @@ func (r *BlocklistRepo) GetAll() ([]string, error) {
 		return nil, err
 	}
 	return domains, nil
+}
+
+// CountSnapshots returns the total number of blocklist snapshots persisted.
+// It is used to decide whether the offline bundle should seed the DB: a count
+// of zero means no blocklist data has ever been loaded (bundled or fetched).
+func (r *BlocklistRepo) CountSnapshots() (int64, error) {
+	var count int64
+	err := r.db.Model(&models.BlocklistSnapshot{}).Count(&count).Error
+	return count, err
 }
 
 func (r *BlocklistRepo) SaveSnapshotWithEntries(src models.BlocklistSource, checksum string, entries []models.BlocklistEntry) (models.BlocklistSnapshot, error) {
@@ -131,6 +142,20 @@ func (r *BlocklistRepo) CountEntriesBySource(sourceID string) (int64, error) {
 	var count int64
 	err := r.db.Model(&models.BlocklistEntry{}).Where("source_id = ?", sourceID).Count(&count).Error
 	return count, err
+}
+
+// GetRecentSnapshots returns up to limit snapshots for a source, most recent
+// first. A non-positive limit returns all snapshots. Ordering is by creation
+// time then ID so ties (snapshots written in the same instant) stay
+// deterministic, which the health checker relies on for its collapse baseline.
+func (r *BlocklistRepo) GetRecentSnapshots(sourceID string, limit int) ([]models.BlocklistSnapshot, error) {
+	var snaps []models.BlocklistSnapshot
+	q := r.db.Where("source_id = ?", sourceID).Order("created_at desc, id desc")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	err := q.Find(&snaps).Error
+	return snaps, err
 }
 
 // CountEntriesGroupedBySource returns domain counts keyed by source ID in a single query.

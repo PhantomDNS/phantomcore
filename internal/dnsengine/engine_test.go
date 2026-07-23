@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lopster568/phantomDNS/internal/metrics"
+	"github.com/lopster568/phantomDNS/internal/nrd"
 	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"github.com/lopster568/phantomDNS/internal/threat"
@@ -834,5 +835,100 @@ func TestProcessDNSQuery_SafeSearchDoesNotOverrideBlock(t *testing.T) {
 	}
 	if got := cnameTarget(w.msg); got != "" {
 		t.Errorf("expected no CNAME on blocked host, got CNAME to %q", got)
+	}
+}
+
+// --- NRD (newly-registered-domain) feed tests ---
+
+// isServfail reports whether the response is a SERVFAIL, which is what
+// forwardUpstream produces with an empty (no-resolver) upstream manager. It lets
+// the allow/flag path be exercised deterministically without any network.
+func isServfail(m *dns.Msg) bool {
+	return m != nil && m.Rcode == dns.RcodeServerFailure
+}
+
+func TestProcessDNSQuery_NRDBlock(t *testing.T) {
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.nrd = nrd.NewWithSet(nrd.NewSet([]string{"freshdomain.com"}), true) // block mode
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("freshdomain.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected response for NRD-listed domain in block mode")
+	}
+	if !isBlockedResponse(w.msg) {
+		t.Errorf("expected blocked (0.0.0.0) for NRD domain in block mode, got rcode %d", w.msg.Rcode)
+	}
+}
+
+func TestProcessDNSQuery_NRDBlock_ParentMatch(t *testing.T) {
+	// Feed lists the registrable parent; a subdomain query must be blocked.
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.nrd = nrd.NewWithSet(nrd.NewSet([]string{"freshdomain.com"}), true)
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("login.freshdomain.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected response for NRD parent-domain match")
+	}
+	if !isBlockedResponse(w.msg) {
+		t.Errorf("expected blocked (0.0.0.0) for NRD parent match, got rcode %d", w.msg.Rcode)
+	}
+}
+
+func TestProcessDNSQuery_NRDFlag_NotBlocked(t *testing.T) {
+	// Flag mode: a listed domain must NOT be blocked; it reaches the allow/forward
+	// path. With an empty upstream manager, forwardUpstream returns SERVFAIL,
+	// which confirms the query was forwarded rather than blocked.
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.nrd = nrd.NewWithSet(nrd.NewSet([]string{"freshdomain.com"}), false) // flag mode
+	e.upstreamManager = &UpstreamManager{}                                 // no resolvers, no network
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("freshdomain.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected a response in flag mode")
+	}
+	if isBlockedResponse(w.msg) {
+		t.Error("flag mode must not block; expected forward path, got a 0.0.0.0 block")
+	}
+	if !isServfail(w.msg) {
+		t.Errorf("expected SERVFAIL from forward path, got rcode %d", w.msg.Rcode)
+	}
+}
+
+func TestProcessDNSQuery_NRDNotListed_Passes(t *testing.T) {
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.nrd = nrd.NewWithSet(nrd.NewSet([]string{"freshdomain.com"}), true) // block mode
+	e.upstreamManager = &UpstreamManager{}
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("well-established.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected a response for a non-listed domain")
+	}
+	if isBlockedResponse(w.msg) {
+		t.Error("non-listed domain must not be blocked by NRD")
+	}
+}
+
+func TestProcessDNSQuery_NRDNoFeed_Inert(t *testing.T) {
+	// A checker with no feed configured must be inert: the domain passes through.
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.nrd = nrd.New(nrd.Config{}) // no FeedURL, no data loaded
+	e.upstreamManager = &UpstreamManager{}
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("freshdomain.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected a response with an inert NRD checker")
+	}
+	if isBlockedResponse(w.msg) {
+		t.Error("inert NRD checker (no feed) must not block")
 	}
 }

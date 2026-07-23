@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# systemd unit for the HydraDNS dataplane on bare-metal / appliance boxes.
+#
+# Install:
+#   sudo cp deploy/hydradns.service /etc/systemd/system/hydradns.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hydradns.service
+#
+# This unit provides process-level auto-restart (Restart=always) that complements
+# the in-process self-heal watchdog: the watchdog handles soft stalls in-process,
+# while systemd recovers the box when the process itself dies or is wedged.
+
+[Unit]
+Description=HydraDNS DNS security gateway (dataplane)
+Documentation=https://docs.hydradns.app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dataplane
+Restart=always
+RestartSec=2s
+
+# Self-heal watchdog cadence (Go duration; "off" or "0" disables it).
+Environment=WATCHDOG_INTERVAL=30s
+Environment=WATCHDOG_FAILURE_THRESHOLD=3
+
+# Config / data locations (override as needed for your deployment).
+Environment=PHANTOM_CONFIG=/etc/hydradns/config.yaml
+Environment=PHANTOM_DB=/var/lib/hydradns/phantomdns.db
+
+# Hardening — DNS needs to bind privileged ports; grant only that capability.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/hydradns
+
+[Install]
+WantedBy=multi-user.target

@@ -4,22 +4,32 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/lopster568/phantomDNS/internal/blocklist"
+	"github.com/lopster568/phantomDNS/internal/blocklist/bundle"
 	"github.com/lopster568/phantomDNS/internal/config"
+	"github.com/lopster568/phantomDNS/internal/diskhealth"
 	"github.com/lopster568/phantomDNS/internal/dnsengine"
+	"github.com/lopster568/phantomDNS/internal/geoip"
 	dataplanegrpc "github.com/lopster568/phantomDNS/internal/grpc/dataplane"
+	"github.com/lopster568/phantomDNS/internal/heartbeat"
 	"github.com/lopster568/phantomDNS/internal/logger"
+	"github.com/lopster568/phantomDNS/internal/metrics/promexport"
+	"github.com/lopster568/phantomDNS/internal/nrd"
 	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/db"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
+	"github.com/lopster568/phantomDNS/internal/watchdog"
 )
 
 func main() {
 	logger.Log.Info("Starting PhantomDNS Data Plane...")
+	config.LogCustodyMode()
 
 	// 1. Initialize DB
 	dbPath := "/app/data/phantomdns.db"
@@ -28,11 +38,35 @@ func main() {
 	}
 	db.InitDB(dbPath)
 
+	// 1b. Disk / SD-card health monitor (best-effort, non-fatal). Watches free
+	// space and growth on the data path; expose diskMon.Status() from a
+	// health / heartbeat surface. Configured via DISK_HEALTH_INTERVAL and
+	// DISK_MIN_FREE_PERCENT.
+	diskMon := diskhealth.NewMonitorFromEnv(dbPath)
+	go diskMon.Run(context.Background())
+
 	// 2. Initialize Repositories
 	repos := repositories.NewStore(db.DB)
 
 	// 3. Blocklist Engine — load from DB sources, refresh periodically
 	blEngine := blocklist.NewEngine(repos.Blocklist)
+
+	// Offline-first: seed the checker from the embedded bundle when the DB has
+	// no blocklist snapshot yet, so the dataplane blocks well-known ad/malware
+	// domains immediately on first boot with no internet. This runs before the
+	// DNS server starts and only fires when nothing has ever been loaded; it
+	// never overwrites data fetched by the online refresh below.
+	if config.BundledBlocklistEnabled() {
+		if seeded, err := bundle.SeedIfEmpty(repos.Blocklist); err != nil {
+			logger.Log.Warnf("Bundled blocklist seed failed: %v", err)
+		} else if seeded {
+			logger.Log.Info("Seeded blocklist from embedded offline bundle (no snapshot present)")
+		} else {
+			logger.Log.Info("Bundled blocklist seed skipped (blocklist snapshot already present)")
+		}
+	} else {
+		logger.Log.Info("Bundled blocklist seeding disabled via BUNDLED_BLOCKLIST")
+	}
 
 	// Initial load in background so DNS starts immediately
 	go func() {
@@ -55,6 +89,11 @@ func main() {
 			cancel()
 		}
 	}()
+
+	// 3b. Blocklist source health monitoring — flags dead, collapsed, or stale
+	// sources on an interval. Non-fatal; results are retained for status/heartbeat.
+	healthChecker := blocklist.NewHealthChecker(repos.Blocklist, blocklist.DefaultHealthThresholds(), time.Now)
+	go healthChecker.Run(context.Background(), healthInterval(config.DefaultConfig.DataPlane.BlocklistHealthInterval))
 
 	// 4. Initialize Policy Engine — load from file + DB
 	policyEngine := policy.NewPolicyEngine()
@@ -86,6 +125,20 @@ func main() {
 		logger.Log.Fatal("Failed to create DNS engine: " + err.Error())
 	}
 
+	// 5b. Optional ASN/GeoIP answer filtering — inert unless GEOIP_DB_PATH is set.
+	geoCfg := config.DefaultConfig.DataPlane.GeoIP
+	geoFilter, err := geoip.FromConfig(geoCfg.DBPath, geoCfg.BlockedASNs, geoCfg.BlockedCountries, geoCfg.Block)
+	if err != nil {
+		logger.Log.Warnf("GeoIP filtering disabled: %v", err)
+	} else if geoFilter != nil {
+		engine.AttachGeoFilter(geoFilter)
+		mode := "flag"
+		if geoFilter.BlockMode() {
+			mode = "block"
+		}
+		logger.Log.Infof("ASN/GeoIP answer filtering enabled (mode=%s)", mode)
+	}
+
 	// 6. gRPC server
 	statusService := dataplanegrpc.NewStatusService(engine)
 	metricsService := dataplanegrpc.NewMetricsService(engine)
@@ -98,6 +151,49 @@ func main() {
 		}
 	}()
 
+	// 6b. Prometheus metrics HTTP server.
+	// Metrics are in-process here (engine.Metrics()), so /metrics is exposed
+	// directly on the dataplane rather than bridged over gRPC.
+	go func() {
+		metricsAddr := config.DefaultConfig.DataPlane.MetricsAddr
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promexport.Handler(engine.Metrics()))
+		metricsSrv := &http.Server{
+			Addr:              metricsAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		logger.Log.Infof("Starting dataplane metrics server on %s/metrics", metricsAddr)
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Log.Errorf("metrics server failed: %v", err)
+		}
+	}()
+
+	// 6c. Heartbeat reporter — opt-in, metadata-only fleet status reporting.
+	// Started only when HEARTBEAT_URL is configured; non-blocking and never fatal.
+	hb := heartbeat.New(heartbeat.Config{
+		URL:      config.DefaultConfig.DataPlane.HeartbeatURL,
+		Interval: config.DefaultConfig.DataPlane.HeartbeatInterval,
+		DBPath:   dbPath,
+	}, engine.Metrics(), engine, repos.Blocklist)
+	hb.Start(context.Background())
+
+	// 6d. Newly-registered-domain (NRD) feed — inert unless NRD_FEED_URL is set.
+	// Kept separate from user blocklists; refreshed periodically like blocklists.
+	nrdCfg := nrd.Config{
+		FeedURL: config.DefaultConfig.DataPlane.NRDFeedURL,
+		Block:   config.DefaultConfig.DataPlane.NRDBlock,
+	}
+	if iv, err := time.ParseDuration(config.DefaultConfig.DataPlane.NRDRefreshInterval); err == nil && iv > 0 {
+		nrdCfg.RefreshInterval = iv
+	}
+	nrdChecker := nrd.New(nrdCfg)
+	if nrdChecker.Enabled() {
+		logger.Log.Infof("NRD feed enabled (block=%v): %s", nrdCfg.Block, nrdCfg.FeedURL)
+		go nrdChecker.Run(context.Background())
+	}
+	engine.AttachNRDChecker(nrdChecker)
+
 	// 7. Attach blocklist checker and start DNS server
 	engine.AttachBlocklistChecker(repos.Blocklist)
 	srv, err := dnsengine.NewServer(config.DefaultConfig.DataPlane, engine)
@@ -105,8 +201,70 @@ func main() {
 		logger.Log.Fatal("Failed to create server: " + err.Error())
 	}
 
+	// 8. Self-heal watchdog — supervise dataplane liveness on unattended boxes.
+	// Probe: the engine must be accepting queries. Recovery: an in-process
+	// listener restart is not safely in scope from here (the DNS server owns its
+	// own bind/shutdown lifecycle), so we emit a critical log line instead; the
+	// systemd unit (deploy/hydradns.service, Restart=always) handles bare-metal
+	// process-level recovery when the box is truly wedged.
+	startWatchdog(engine)
+
 	logger.Log.Infof("DNS server listening on %s", config.DefaultConfig.DataPlane.ListenAddr)
 	srv.Run()
+}
+
+// healthInterval parses the configured blocklist health interval. "off", "0",
+// "disabled", or an empty value turn the periodic monitor off (a single check
+// still runs); an unparseable value falls back to 1h.
+func healthInterval(v string) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+		return time.Hour
+	case "off", "0", "disabled":
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		logger.Log.Warnf("invalid BLOCKLIST_HEALTH_INTERVAL %q, using 1h", v)
+		return time.Hour
+	}
+	return d
+}
+
+// startWatchdog constructs and launches the self-heal watchdog for the DNS
+// engine. It is a no-op when WATCHDOG_INTERVAL disables it. The watchdog is
+// started in a background goroutine that first waits for the DNS server to come
+// up, so the normal startup window is not flagged as unhealthy.
+func startWatchdog(engine *dnsengine.Engine) {
+	wd := watchdog.New(
+		watchdog.Config{
+			Interval:         config.DefaultConfig.DataPlane.WatchdogIntervalDuration(),
+			FailureThreshold: config.DefaultConfig.DataPlane.WatchdogFailureThreshold,
+		},
+		// Liveness probe: engine is healthy while it is accepting queries.
+		func() bool { return engine.Status().AcceptingQueries },
+		// Recovery: log critically for external supervision. Restarting the DNS
+		// listener in-process is not safely in scope here; deploy/hydradns.service
+		// (Restart=always) provides bare-metal auto-restart for hard failures.
+		func() {
+			logger.Log.Error("watchdog: dataplane stalled (engine not accepting queries); " +
+				"relying on systemd Restart=always for bare-metal recovery")
+		},
+		logger.Log,
+	)
+
+	if !wd.Enabled() {
+		logger.Log.Info("Self-heal watchdog disabled (WATCHDOG_INTERVAL off)")
+		return
+	}
+
+	go func() {
+		// Wait for the server to start accepting queries before supervising.
+		for !engine.Status().AcceptingQueries {
+			time.Sleep(500 * time.Millisecond)
+		}
+		wd.Start(context.Background())
+	}()
 }
 
 func refreshBlocklists(ctx context.Context, engine *blocklist.Engine, repo repositories.BlocklistRepository) {

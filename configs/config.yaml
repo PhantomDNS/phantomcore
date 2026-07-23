@@ -1,8 +1,19 @@
+# local_only: data-custody master switch (I-061).
+# When true, all non-resolution outbound ("phone-home") calls are disabled:
+# telemetry, update checks, crash reporting, remote config, heartbeats.
+# Core DNS resolution and operator-configured blocklist fetches still work.
+# Overridable at runtime via the LOCAL_ONLY environment variable. Default: false.
+local_only: false
+
 dataplane:
   listen_addr: "0.0.0.0:1053"
   upstream_resolvers:
+    # Plain UDP/TCP (default). Optionally prefix with "udp://".
     - "8.8.8.8:53"
     - "1.1.1.1:53"
+    # Encrypted upstreams are opt-in per resolver:
+    #   - "tls://1.1.1.1:853"                     # DNS-over-TLS (DoT)
+    #   - "https://cloudflare-dns.com/dns-query"  # DNS-over-HTTPS (DoH)
   anonymization:
     secret: "${PHANTOM_ANON_SECRET:-change-me-in-production}"
   blocklist_update_interval: "6h"
@@ -25,9 +36,40 @@ dataplane:
   # Enable DNS 0x20 case-randomization on outbound upstream queries
   # (anti-spoofing hardening). Default false. Env override: DNS_0X20.
   dns_0x20: false
+  # Address for the Prometheus /metrics endpoint (defaults to 0.0.0.0:9153).
+  metrics_addr: "0.0.0.0:9153"
+  # Self-heal watchdog: probe cadence and consecutive-failure threshold before
+  # recovery. Set watchdog_interval to "off" or "0" to disable. Overridable via
+  # WATCHDOG_INTERVAL / WATCHDOG_FAILURE_THRESHOLD env vars.
+  watchdog_interval: "30s"
+  watchdog_failure_threshold: 3
+  # Typosquat / homoglyph detection against a protected-brand watchlist.
+  # Empty list (default) = OFF. Also settable via env: TYPOSQUAT_BRANDS
+  # (comma-separated) and TYPOSQUAT_BLOCK (true/false).
+  # typosquat_brands:
+  #   - "paypal.com"
+  # typosquat_block: false
+  # Optional ASN/GeoIP answer filtering. Disabled unless db_path points at a
+  # MaxMind-format database. Also configurable via env: GEOIP_DB_PATH,
+  # BLOCKED_ASNS (comma ints), BLOCKED_COUNTRIES (comma ISO codes), GEOIP_BLOCK.
+  # geoip:
+  #   db_path: "/app/data/GeoLite2-ASN.mmdb"
+  #   blocked_asns: [64500]
+  #   blocked_countries: ["RU", "KP"]
+  #   block: false   # false = flag only (default), true = block the answer
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"
 
 controlplane:
   listen_addr: "0.0.0.0:8080"
+  # Optional HTTPS for the control-plane API. HTTP is the default (TLS off).
+  # Public ACME cannot issue for private-LAN names, so use either an
+  # operator-provided cert/key pair, or an auto-generated self-signed cert.
+  # tls:
+  #   # Provided cert/key (both must be set to serve HTTPS):
+  #   cert_file: "/etc/hydra/tls/server.crt"  # env: TLS_CERT_FILE
+  #   key_file: "/etc/hydra/tls/server.key"   # env: TLS_KEY_FILE
+  #   # Or auto-generate a self-signed cert on first boot:
+  #   auto_self_signed: false                 # env: TLS_AUTO_SELF_SIGNED
+  #   self_signed_dir: "/app/data/tls"        # env: TLS_SELF_SIGNED_DIR
