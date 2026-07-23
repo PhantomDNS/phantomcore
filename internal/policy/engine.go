@@ -23,17 +23,22 @@ func (e *Engine) LoadPolicies(policies []Policy) error {
 }
 
 // Evaluate returns the decision for given domain and context.
-// Current implementation:
+// Evaluation order:
 //   - normalize domain
-//   - bloom negative => ALLOW
-//   - exact match => return highest-priority policy decision
-//   - otherwise => ALLOW (TODO: wildcard/regex)
+//   - exact-match/Bloom fast path (walks up parent domains) => decision
+//   - regex + wildcard slow path (only on exact miss) => decision
+//   - otherwise => ALLOW
+//
+// The exact-match fast path returns immediately when it hits, so an exact rule
+// always wins over regex/wildcard rules. Within the regex/wildcard slow path,
+// the usual priority ordering applies (higher priority wins; tie => lexicographic ID).
 func (e *Engine) Evaluate(domain string) (Decision, error) {
 	d := normalizeDomain(domain)
 	snap := e.snapshot.Load().(*PolicySnapshot)
 
 	// Check exact match first, then walk up parent domains for subdomain matching.
-	// e.g., www.godaddy.com → check www.godaddy.com, then godaddy.com
+	// e.g., www.godaddy.com → check www.godaddy.com, then godaddy.com.
+	// This is the hot path and is intentionally left untouched.
 	parts := strings.Split(d, ".")
 	for i := 0; i < len(parts)-1; i++ {
 		candidate := strings.Join(parts[i:], ".")
@@ -46,7 +51,34 @@ func (e *Engine) Evaluate(domain string) (Decision, error) {
 		}
 	}
 
+	// Slow path: no exact match. Evaluate wildcard and compiled-regex rules,
+	// respecting the same priority ordering as the exact path.
+	if best := matchDynamic(snap, d); best != nil {
+		return policyDecision(best), nil
+	}
+
 	return Decision{Action: ActionAllow}, nil
+}
+
+// matchDynamic returns the highest-priority policy whose wildcard or compiled
+// regex rule matches d, or nil when nothing matches. A wildcard "*.example.com"
+// matches the base domain ("example.com") and any subdomain of it.
+func matchDynamic(snap *PolicySnapshot, d string) *Policy {
+	var candidates []*Policy
+	for _, w := range snap.Wildcards {
+		if d == w.base || strings.HasSuffix(d, "."+w.base) {
+			candidates = append(candidates, w.policy)
+		}
+	}
+	for _, r := range snap.Regexes {
+		if r.re.MatchString(d) {
+			candidates = append(candidates, r.policy)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	return pickHighestPriority(candidates)
 }
 
 // pickHighestPriority returns the matching policy with highest priority (deterministic).

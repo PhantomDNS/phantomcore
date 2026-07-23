@@ -194,6 +194,190 @@ func TestPolicyDecision_Nil(t *testing.T) {
 	}
 }
 
+func TestEvaluate_BlockByRegex(t *testing.T) {
+	e := NewPolicyEngine()
+	e.LoadPolicies([]Policy{
+		{ID: "rx-block", Action: "BLOCK", Priority: 100, Regexes: []string{`.*\.doubleclick\.net$`}},
+	})
+
+	d, err := e.Evaluate("ads.doubleclick.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionDeny {
+		t.Errorf("expected ActionDeny for regex match, got %v", d.Action)
+	}
+	if d.PolicyID != "rx-block" {
+		t.Errorf("expected policy ID rx-block, got %q", d.PolicyID)
+	}
+
+	// Non-matching domain should fall through to ALLOW.
+	d, err = e.Evaluate("safe.example.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionAllow {
+		t.Errorf("expected ActionAllow for non-matching domain, got %v", d.Action)
+	}
+}
+
+func TestEvaluate_RegexAllowOverridesByPriority(t *testing.T) {
+	e := NewPolicyEngine()
+	e.LoadPolicies([]Policy{
+		{ID: "rx-block", Action: "BLOCK", Priority: 10, Regexes: []string{`.*\.tracking\.com$`}},
+		{ID: "rx-allow", Action: "ALLOW", Priority: 100, Regexes: []string{`.*\.tracking\.com$`}},
+	})
+
+	d, err := e.Evaluate("beacon.tracking.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionAllow {
+		t.Errorf("expected higher-priority ALLOW regex to win, got %v", d.Action)
+	}
+	if d.PolicyID != "rx-allow" {
+		t.Errorf("expected policy ID rx-allow, got %q", d.PolicyID)
+	}
+}
+
+func TestEvaluate_RegexTieBreakByID(t *testing.T) {
+	e := NewPolicyEngine()
+	e.LoadPolicies([]Policy{
+		{ID: "zzz-rx", Action: "ALLOW", Priority: 50, Regexes: []string{`^tie\.rx$`}},
+		{ID: "aaa-rx", Action: "BLOCK", Priority: 50, Regexes: []string{`^tie\.rx$`}},
+	})
+
+	d, err := e.Evaluate("tie.rx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.PolicyID != "aaa-rx" {
+		t.Errorf("expected lexicographically first ID 'aaa-rx' on tie, got %q", d.PolicyID)
+	}
+	if d.Action != ActionDeny {
+		t.Errorf("expected ActionDeny from tie-break winner, got %v", d.Action)
+	}
+}
+
+func TestEvaluate_WildcardMatchesSubdomains(t *testing.T) {
+	e := NewPolicyEngine()
+	e.LoadPolicies([]Policy{
+		{ID: "wild", Action: "BLOCK", Priority: 100, Domains: []string{"*.example.com"}},
+	})
+
+	// Wildcard matches the base domain and any depth of subdomain.
+	for _, domain := range []string{"example.com", "sub.example.com", "a.b.example.com"} {
+		d, err := e.Evaluate(domain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Action != ActionDeny {
+			t.Errorf("expected %s to be blocked by wildcard, got %v", domain, d.Action)
+		}
+		if d.PolicyID != "wild" {
+			t.Errorf("expected policy ID wild for %s, got %q", domain, d.PolicyID)
+		}
+	}
+
+	// Unrelated domains must not match.
+	for _, domain := range []string{"notexample.com", "example.com.evil.net", "other.org"} {
+		d, err := e.Evaluate(domain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Action != ActionAllow {
+			t.Errorf("expected %s to be allowed (no wildcard match), got %v", domain, d.Action)
+		}
+	}
+}
+
+func TestEvaluate_WildcardPriority(t *testing.T) {
+	e := NewPolicyEngine()
+	e.LoadPolicies([]Policy{
+		{ID: "wild-block", Action: "BLOCK", Priority: 10, Domains: []string{"*.corp.com"}},
+		{ID: "wild-allow", Action: "ALLOW", Priority: 100, Domains: []string{"*.corp.com"}},
+	})
+
+	d, err := e.Evaluate("intra.corp.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionAllow || d.PolicyID != "wild-allow" {
+		t.Errorf("expected higher-priority wildcard ALLOW to win, got action=%v id=%q", d.Action, d.PolicyID)
+	}
+}
+
+func TestEvaluate_ExactWinsOverRegex(t *testing.T) {
+	e := NewPolicyEngine()
+	e.LoadPolicies([]Policy{
+		{ID: "exact", Action: "BLOCK", Priority: 10, Domains: []string{"exact.com"}},
+		// Catch-all regex at much higher priority; exact fast path must still win.
+		{ID: "rx-all", Action: "ALLOW", Priority: 999, Regexes: []string{`.*`}},
+	})
+
+	d, err := e.Evaluate("exact.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionDeny || d.PolicyID != "exact" {
+		t.Errorf("expected exact-match fast path to win, got action=%v id=%q", d.Action, d.PolicyID)
+	}
+
+	// A domain with no exact match falls through to the regex slow path.
+	d, err = e.Evaluate("anything.else")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionAllow || d.PolicyID != "rx-all" {
+		t.Errorf("expected regex slow path to match, got action=%v id=%q", d.Action, d.PolicyID)
+	}
+}
+
+func TestEvaluate_InvalidRegexDoesNotCrash(t *testing.T) {
+	e := NewPolicyEngine()
+	// Bad regex reaches the snapshot directly (LoadPolicies skips load-time
+	// validation); it must be skipped, and valid rules must still work.
+	e.LoadPolicies([]Policy{
+		{ID: "bad-rx", Action: "BLOCK", Priority: 100, Regexes: []string{`[invalid(`}},
+		{ID: "good-rx", Action: "BLOCK", Priority: 100, Regexes: []string{`^good\.net$`}},
+	})
+
+	// The invalid regex is skipped; querying anything must not panic.
+	d, err := e.Evaluate("harmless.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionAllow {
+		t.Errorf("expected ActionAllow (invalid regex skipped), got %v", d.Action)
+	}
+
+	// The valid regex alongside it still matches.
+	d, err = e.Evaluate("good.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionDeny || d.PolicyID != "good-rx" {
+		t.Errorf("expected valid regex to still match, got action=%v id=%q", d.Action, d.PolicyID)
+	}
+}
+
+func TestEvaluate_ExactStillWorksWithDynamicRulesPresent(t *testing.T) {
+	e := NewPolicyEngine()
+	e.LoadPolicies([]Policy{
+		{ID: "exact-block", Action: "BLOCK", Priority: 100, Domains: []string{"ads.example.com"}},
+		{ID: "wild", Action: "BLOCK", Priority: 100, Domains: []string{"*.tracker.net"}},
+		{ID: "rx", Action: "BLOCK", Priority: 100, Regexes: []string{`^evil\.io$`}},
+	})
+
+	d, err := e.Evaluate("ads.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionDeny || d.PolicyID != "exact-block" {
+		t.Errorf("expected exact match to still work with regex/wildcard present, got action=%v id=%q", d.Action, d.PolicyID)
+	}
+}
+
 func TestActionString(t *testing.T) {
 	tests := []struct {
 		a    Action
