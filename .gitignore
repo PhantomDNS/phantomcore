@@ -1,7 +1,9 @@
 # Binaries
 /bin/
-controlplane
-dataplane
+# Anchored to repo root: unanchored patterns also matched the
+# cmd/controlplane and cmd/dataplane source directories.
+/controlplane
+/dataplane
 
 # Data
 /data/
