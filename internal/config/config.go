@@ -88,6 +88,16 @@ type DataPlaneConfig struct {
 	// true blocks the query. See internal/dnsengine/nod.go for the ledger.
 	NODWindowHours int  `yaml:"nod_window_hours"`
 	NODBlock       bool `yaml:"nod_block"`
+
+	// FastFluxDetection enables the flag-only fast-flux heuristic (never blocks).
+	// Disabled by default to avoid false positives on CDNs.
+	FastFluxDetection bool `yaml:"fast_flux_detection"`
+	// FastFluxIPThreshold is the number of distinct answer IPs within the sliding
+	// window at or above which a low-TTL domain is flagged (default 8).
+	FastFluxIPThreshold int `yaml:"fast_flux_ip_threshold"`
+	// FastFluxTTLMaxSec is the maximum TTL (seconds) still considered "low" for
+	// fast-flux flagging (default 300).
+	FastFluxTTLMaxSec int `yaml:"fast_flux_ttl_max_sec"`
 }
 
 // WatchdogIntervalDuration parses WatchdogInterval into a duration. It returns 0
@@ -187,6 +197,9 @@ func defaultConfig() *Config {
 			BlocklistHealthInterval:  "1h",
 			WatchdogInterval:         "30s",
 			WatchdogFailureThreshold: 3,
+			FastFluxDetection:        false,
+			FastFluxIPThreshold:      8,
+			FastFluxTTLMaxSec:        300,
 			GRPCServer: GRPCServerConfig{
 				Port:       50051,
 				ListenAddr: "localhost:50051",
@@ -304,6 +317,11 @@ var DefaultConfig = func() *Config {
 			cfg.DataPlane.NODBlock = b
 		} else {
 			logger.Log.Warnf("Invalid NOD_BLOCK=%q, ignoring: %v", v, err)
+		}
+	}
+	if v := os.Getenv("FAST_FLUX_DETECTION"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.DataPlane.FastFluxDetection = b
 		}
 	}
 	return cfg
