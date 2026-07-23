@@ -9,6 +9,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/nrd"
 	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
+	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 	"github.com/lopster568/phantomDNS/internal/threat"
 	"github.com/miekg/dns"
 )
@@ -57,6 +58,10 @@ func (m *mockQueryLog) Save(q *models.DNSQuery) error {
 
 func (m *mockQueryLog) ListRecent(limit int) ([]models.DNSQuery, error) {
 	return nil, nil
+}
+
+func (m *mockQueryLog) List(filter repositories.QueryLogFilter) ([]models.DNSQuery, int64, error) {
+	return nil, 0, nil
 }
 
 // waitSaved blocks until logQuery's goroutine persists a row (or times out).
