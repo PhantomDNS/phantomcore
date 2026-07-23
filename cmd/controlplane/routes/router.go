@@ -57,5 +57,11 @@ func RegisterRoutes(r *gin.Engine, apiHandler *handlers.APIHandler) {
 			analytics.GET("/summary", apiHandler.GetAnalyticsSummary)
 			analytics.GET("/audits", apiHandler.GetAuditLogs)
 		}
+
+		// Device inventory endpoints
+		devices := api.Group("/devices")
+		{
+			devices.GET("", apiHandler.GetDevices)
+		}
 	}
 }
