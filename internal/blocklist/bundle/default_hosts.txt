@@ -1,0 +1,215 @@
+# PhantomDNS / HydraDNS bundled offline blocklist seed
+# ----------------------------------------------------
+# This is a small, curated, well-known list of ad/tracker/malware domains
+# embedded in the dataplane binary so that filtering works from the very
+# first boot with no internet connectivity. It is intentionally modest and
+# is only a SEED: the normal periodic refresh replaces coverage with the
+# configured upstream sources once the device is online.
+#
+# Format: standard hosts (0.0.0.0 <domain>). One domain per line.
+# License note: these are widely-published, well-known advertising and
+# telemetry endpoints; the list is a small hand-picked default, not a
+# redistribution of any single upstream blocklist.
+
+# --- Ad serving / exchanges ---
+0.0.0.0 doubleclick.net
+0.0.0.0 ad.doubleclick.net
+0.0.0.0 static.doubleclick.net
+0.0.0.0 googleadservices.com
+0.0.0.0 pagead2.googlesyndication.com
+0.0.0.0 googlesyndication.com
+0.0.0.0 partner.googleadservices.com
+0.0.0.0 pubads.g.doubleclick.net
+0.0.0.0 securepubads.g.doubleclick.net
+0.0.0.0 adservice.google.com
+0.0.0.0 ads.google.com
+0.0.0.0 adnxs.com
+0.0.0.0 ib.adnxs.com
+0.0.0.0 secure.adnxs.com
+0.0.0.0 rubiconproject.com
+0.0.0.0 fastlane.rubiconproject.com
+0.0.0.0 pubmatic.com
+0.0.0.0 ads.pubmatic.com
+0.0.0.0 openx.net
+0.0.0.0 us-u.openx.net
+0.0.0.0 casalemedia.com
+0.0.0.0 contextweb.com
+0.0.0.0 33across.com
+0.0.0.0 adform.net
+0.0.0.0 adform.com
+0.0.0.0 smartadserver.com
+0.0.0.0 sascdn.com
+0.0.0.0 criteo.com
+0.0.0.0 criteo.net
+0.0.0.0 static.criteo.net
+0.0.0.0 bidswitch.net
+0.0.0.0 taboola.com
+0.0.0.0 cdn.taboola.com
+0.0.0.0 trc.taboola.com
+0.0.0.0 outbrain.com
+0.0.0.0 widgets.outbrain.com
+0.0.0.0 mgid.com
+0.0.0.0 servicer.mgid.com
+0.0.0.0 revcontent.com
+0.0.0.0 media.net
+0.0.0.0 adsystem.com
+0.0.0.0 amazon-adsystem.com
+0.0.0.0 aax.amazon-adsystem.com
+0.0.0.0 s.amazon-adsystem.com
+0.0.0.0 advertising.com
+0.0.0.0 adtechus.com
+0.0.0.0 adtech.de
+0.0.0.0 yieldmo.com
+0.0.0.0 sharethrough.com
+0.0.0.0 gumgum.com
+0.0.0.0 teads.tv
+0.0.0.0 a.teads.tv
+0.0.0.0 spotxchange.com
+0.0.0.0 spotx.tv
+0.0.0.0 indexww.com
+0.0.0.0 casalemedia.net
+0.0.0.0 3lift.com
+0.0.0.0 adcolony.com
+0.0.0.0 applovin.com
+0.0.0.0 unityads.unity3d.com
+0.0.0.0 vungle.com
+0.0.0.0 inmobi.com
+0.0.0.0 chartboost.com
+0.0.0.0 mopub.com
+0.0.0.0 adsrvr.org
+0.0.0.0 zemanta.com
+0.0.0.0 quantserve.com
+0.0.0.0 quantcount.com
+0.0.0.0 exponential.com
+0.0.0.0 tribalfusion.com
+0.0.0.0 undertone.com
+0.0.0.0 districtm.io
+0.0.0.0 gammaplatform.com
+
+# --- Analytics / telemetry / tracking ---
+0.0.0.0 google-analytics.com
+0.0.0.0 www.google-analytics.com
+0.0.0.0 ssl.google-analytics.com
+0.0.0.0 analytics.google.com
+0.0.0.0 googletagmanager.com
+0.0.0.0 googletagservices.com
+0.0.0.0 www.googletagservices.com
+0.0.0.0 stats.g.doubleclick.net
+0.0.0.0 app-measurement.com
+0.0.0.0 crashlytics.com
+0.0.0.0 settings.crashlytics.com
+0.0.0.0 firebase-settings.crashlytics.com
+0.0.0.0 mixpanel.com
+0.0.0.0 api.mixpanel.com
+0.0.0.0 segment.com
+0.0.0.0 api.segment.io
+0.0.0.0 cdn.segment.com
+0.0.0.0 amplitude.com
+0.0.0.0 api.amplitude.com
+0.0.0.0 hotjar.com
+0.0.0.0 static.hotjar.com
+0.0.0.0 script.hotjar.com
+0.0.0.0 fullstory.com
+0.0.0.0 rs.fullstory.com
+0.0.0.0 mouseflow.com
+0.0.0.0 crazyegg.com
+0.0.0.0 scorecardresearch.com
+0.0.0.0 sb.scorecardresearch.com
+0.0.0.0 chartbeat.com
+0.0.0.0 static.chartbeat.com
+0.0.0.0 newrelic.com
+0.0.0.0 bam.nr-data.net
+0.0.0.0 js-agent.newrelic.com
+0.0.0.0 nr-data.net
+0.0.0.0 branch.io
+0.0.0.0 app.link
+0.0.0.0 adjust.com
+0.0.0.0 app.adjust.com
+0.0.0.0 appsflyer.com
+0.0.0.0 t.appsflyer.com
+0.0.0.0 kochava.com
+0.0.0.0 bugsnag.com
+0.0.0.0 sessions.bugsnag.com
+0.0.0.0 sentry.io
+0.0.0.0 optimizely.com
+0.0.0.0 logx.optimizely.com
+0.0.0.0 heap.io
+0.0.0.0 heapanalytics.com
+0.0.0.0 cdn.heapanalytics.com
+0.0.0.0 matomo.cloud
+0.0.0.0 clarity.ms
+0.0.0.0 c.clarity.ms
+0.0.0.0 track.hubspot.com
+0.0.0.0 stats.wp.com
+0.0.0.0 pixel.wp.com
+0.0.0.0 metrics.apple.com
+0.0.0.0 supersonicads.com
+0.0.0.0 flurry.com
+0.0.0.0 data.flurry.com
+0.0.0.0 cdn.flurry.com
+
+# --- Social / cross-site trackers ---
+0.0.0.0 connect.facebook.net
+0.0.0.0 an.facebook.com
+0.0.0.0 pixel.facebook.com
+0.0.0.0 analytics.twitter.com
+0.0.0.0 ads-twitter.com
+0.0.0.0 static.ads-twitter.com
+0.0.0.0 t.co
+0.0.0.0 ads.linkedin.com
+0.0.0.0 px.ads.linkedin.com
+0.0.0.0 analytics.tiktok.com
+0.0.0.0 ads.tiktok.com
+0.0.0.0 business-api.tiktok.com
+0.0.0.0 ads.pinterest.com
+0.0.0.0 log.pinterest.com
+0.0.0.0 ads.yahoo.com
+0.0.0.0 analytics.yahoo.com
+0.0.0.0 ads.reddit.com
+0.0.0.0 events.redditmedia.com
+0.0.0.0 snap.com
+0.0.0.0 tr.snapchat.com
+0.0.0.0 sc-static.net
+
+# --- Malware / phishing / scam (well-known bad TLD parkers & C2 patterns) ---
+0.0.0.0 malwaredomainlist.com
+0.0.0.0 malware.wicar.org
+0.0.0.0 secure-login-verify.com
+0.0.0.0 account-verify-secure.com
+0.0.0.0 free-gift-card-winner.com
+0.0.0.0 your-device-has-virus.com
+0.0.0.0 tech-support-alert.com
+0.0.0.0 fast-download-now.net
+0.0.0.0 clickhere-forprize.com
+0.0.0.0 coin-miner-pool.net
+0.0.0.0 coinhive.com
+0.0.0.0 coin-hive.com
+0.0.0.0 cryptoloot.pro
+0.0.0.0 crypto-loot.com
+0.0.0.0 webminepool.com
+0.0.0.0 minero.cc
+0.0.0.0 authedmine.com
+0.0.0.0 jsecoin.com
+0.0.0.0 miner.pr0gramm.com
+0.0.0.0 coinimp.com
+0.0.0.0 www.coinimp.com
+
+# --- Misc telemetry / notification spam / push-ad networks ---
+0.0.0.0 onesignal.com
+0.0.0.0 cdn.onesignal.com
+0.0.0.0 pushcrew.com
+0.0.0.0 pushengage.com
+0.0.0.0 izooto.com
+0.0.0.0 propellerads.com
+0.0.0.0 propu.sh
+0.0.0.0 propellerpops.com
+0.0.0.0 popads.net
+0.0.0.0 popcash.net
+0.0.0.0 adcash.com
+0.0.0.0 admaven.com
+0.0.0.0 hilltopads.net
+0.0.0.0 clickadu.com
+0.0.0.0 exoclick.com
+0.0.0.0 juicyads.com
+0.0.0.0 trafficjunky.net
+0.0.0.0 trafficfactory.biz
