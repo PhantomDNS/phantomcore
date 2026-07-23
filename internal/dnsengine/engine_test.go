@@ -884,7 +884,7 @@ func TestProcessDNSQuery_NRDFlag_NotBlocked(t *testing.T) {
 	// which confirms the query was forwarded rather than blocked.
 	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
 	e.nrd = nrd.NewWithSet(nrd.NewSet([]string{"freshdomain.com"}), false) // flag mode
-	e.setUpstreamExchanger(&UpstreamManager{})                                 // no resolvers, no network
+	e.setUpstreamExchanger(&UpstreamManager{})                             // no resolvers, no network
 
 	w := &mockResponseWriter{}
 	e.ProcessDNSQuery(w, newTestQuery("freshdomain.com"))
