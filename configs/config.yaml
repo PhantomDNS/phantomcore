@@ -43,6 +43,12 @@ dataplane:
   # WATCHDOG_INTERVAL / WATCHDOG_FAILURE_THRESHOLD env vars.
   watchdog_interval: "30s"
   watchdog_failure_threshold: 3
+  # Typosquat / homoglyph detection against a protected-brand watchlist.
+  # Empty list (default) = OFF. Also settable via env: TYPOSQUAT_BRANDS
+  # (comma-separated) and TYPOSQUAT_BLOCK (true/false).
+  # typosquat_brands:
+  #   - "paypal.com"
+  # typosquat_block: false
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"

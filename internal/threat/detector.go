@@ -10,28 +10,62 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 )
 
 // Result contains the detection output for a domain.
 type Result struct {
 	IsSuspicious    bool    `json:"is_suspicious"`
 	ThreatScore     float64 `json:"threat_score"`     // 0.0 to 1.0
-	DetectionMethod string  `json:"detection_method"` // e.g. "entropy", "dga_pattern", "length"
+	DetectionMethod string  `json:"detection_method"` // e.g. "entropy", "dga_pattern", "length", "typosquat"
 	Reason          string  `json:"reason"`
+	// Block indicates the caller should block (not merely flag) this domain.
+	// Only set for typosquat hits when the detector is configured to block.
+	Block bool `json:"block,omitempty"`
+}
+
+// brandEntry is a precomputed protected brand used for typosquat comparison.
+type brandEntry struct {
+	domain string // full registrable domain, lowercased, e.g. "paypal.com"
+	label  string // registrable label (SLD), lowercased, e.g. "paypal"
+	tld    string // public-suffix portion, e.g. "com" or "co.uk"
 }
 
 // Detector performs heuristic threat analysis on domain names.
 type Detector struct {
 	entropyThreshold float64
 	lengthThreshold  int
+
+	// Typosquat / homoglyph detection against a protected-brand watchlist.
+	// Empty brands => the check is a no-op (feature OFF by default).
+	brands          []brandEntry
+	typoMaxDistance int  // max Damerau/Levenshtein distance to flag (registrable label)
+	blockTyposquat  bool // when true, typosquat hits are marked to block, not just flag
 }
 
-// NewDetector creates a detector with sensible defaults.
+// NewDetector creates a detector with sensible defaults and no protected brands.
 func NewDetector() *Detector {
+	return NewDetectorWithBrands(nil)
+}
+
+// NewDetectorWithBrands creates a detector configured with a typosquat watchlist.
+// brands is a list of protected registrable domains (e.g. "paypal.com").
+// An empty/nil list leaves typosquat detection OFF; all other heuristics run
+// exactly as before.
+func NewDetectorWithBrands(brands []string) *Detector {
 	return &Detector{
 		entropyThreshold: 3.7, // high entropy = random-looking = suspicious
 		lengthThreshold:  50,  // very long domains are often DGA
+		brands:           normalizeBrands(brands),
+		typoMaxDistance:  2,
 	}
+}
+
+// SetTyposquatBlock controls whether typosquat hits are marked to block
+// (Result.Block == true) instead of only flagged as suspicious.
+func (d *Detector) SetTyposquatBlock(block bool) {
+	d.blockTyposquat = block
 }
 
 // Analyze runs all heuristics on a normalized domain name and returns a result.
@@ -50,7 +84,12 @@ func (d *Detector) Analyze(domain string) Result {
 		analysisTarget = longestLabel(parts[:len(parts)-1])
 	}
 
-	// Run detectors in order of confidence
+	// Run detectors in order of confidence. Typosquat runs first so a
+	// watchlist lookalike is reported as "typosquat" rather than being masked
+	// by a generic heuristic. It is a no-op when no brands are configured.
+	if r := d.checkTyposquat(domain); r.IsSuspicious {
+		return r
+	}
 	if r := d.checkDGAPattern(analysisTarget, domain); r.IsSuspicious {
 		return r
 	}
@@ -244,4 +283,217 @@ func longestLabel(labels []string) string {
 func formatFloat(f float64) string {
 	s := fmt.Sprintf("%.2f", f)
 	return s
+}
+
+// --- Typosquat / homoglyph detection -----------------------------------------
+
+// twoLevelTLDs is a small set of common two-label public suffixes so the
+// registrable label (SLD) is extracted correctly (e.g. "foo" in "foo.co.uk").
+// It is intentionally not exhaustive; unknown suffixes fall back to the last
+// two labels, which is correct for the overwhelming majority of TLDs.
+var twoLevelTLDs = map[string]bool{
+	"co.uk": true, "org.uk": true, "ac.uk": true, "gov.uk": true,
+	"co.in": true, "co.jp": true, "co.kr": true, "co.za": true,
+	"com.au": true, "net.au": true, "org.au": true,
+	"com.br": true, "com.cn": true, "com.sg": true, "com.mx": true, "com.tr": true,
+}
+
+// confusables maps visually-confusable runes to their Latin ASCII skeleton.
+// It covers digit lookalikes, a capital that mimics a lowercase letter, and
+// the common Latin-lookalike Cyrillic/Greek letters used in homograph attacks.
+// Runes not present here fall through to unicode.ToLower.
+var confusables = map[rune]string{
+	// digit -> letter lookalikes
+	'0': "o", '1': "l", '3': "e", '4': "a", '5': "s",
+	// capital that mimics a lowercase letter
+	'I': "l",
+	// Cyrillic -> Latin (lowercase)
+	'а': "a", 'е': "e", 'о': "o", 'р': "p", 'с': "c",
+	'х': "x", 'у': "y", 'і': "i", 'ѕ': "s", 'ԁ': "d",
+	'к': "k", 'г': "r",
+	// Cyrillic capitals -> Latin (lowercase)
+	'А': "a", 'Е': "e", 'О': "o", 'Р': "p", 'С': "c",
+	'Х': "x", 'В': "b", 'М': "m", 'Н': "h", 'Т': "t",
+	// Greek -> Latin (lowercase)
+	'ο': "o", 'α': "a", 'ν': "v", 'ρ': "p", 'ι': "i",
+	'κ': "k", 'μ': "u",
+}
+
+// confusableSkeleton reduces a label to a lowercase ASCII "skeleton" by mapping
+// confusable runes to their Latin equivalents. This is what lets "paypa1",
+// "paypaI" and the Cyrillic "pаypal" all collapse to "paypal".
+func confusableSkeleton(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if repl, ok := confusables[r]; ok {
+			b.WriteString(repl)
+			continue
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
+}
+
+// decodePunycodeDomain decodes IDN (xn--) labels to their Unicode form so
+// homograph attacks encoded as punycode can be normalized. On any decode error
+// the original domain is returned unchanged.
+func decodePunycodeDomain(domain string) string {
+	if !strings.Contains(domain, "xn--") {
+		return domain
+	}
+	if u, err := idna.Punycode.ToUnicode(domain); err == nil {
+		return u
+	}
+	return domain
+}
+
+// registrableParts returns the registrable label (SLD) and public-suffix
+// portion of a domain, e.g. ("paypal", "com") or ("foo", "co.uk"). The label
+// preserves its original case (needed to catch capital-letter homoglyphs); the
+// tld is lowercased. Returns empty strings when there is no registrable label.
+func registrableParts(domain string) (label, tld string) {
+	domain = strings.TrimSuffix(domain, ".")
+	parts := strings.Split(domain, ".")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	if len(parts) >= 3 {
+		lastTwo := strings.ToLower(parts[len(parts)-2] + "." + parts[len(parts)-1])
+		if twoLevelTLDs[lastTwo] {
+			return parts[len(parts)-3], lastTwo
+		}
+	}
+	return parts[len(parts)-2], strings.ToLower(parts[len(parts)-1])
+}
+
+// normalizeBrands turns raw watchlist entries into precomputed brand entries,
+// dropping blanks and anything without a registrable label.
+func normalizeBrands(brands []string) []brandEntry {
+	var out []brandEntry
+	for _, raw := range brands {
+		b := strings.TrimSuffix(strings.TrimSpace(strings.ToLower(raw)), ".")
+		if b == "" {
+			continue
+		}
+		label, tld := registrableParts(b)
+		if label == "" || tld == "" {
+			continue
+		}
+		out = append(out, brandEntry{
+			domain: label + "." + tld,
+			label:  label,
+			tld:    tld,
+		})
+	}
+	return out
+}
+
+// checkTyposquat flags a domain that is a near-lookalike of a protected brand
+// on the watchlist. It decodes punycode, applies confusable/homoglyph
+// normalization, and compares the registrable label to each brand using
+// Damerau/Levenshtein edit distance. The exact brand (and its subdomains) is
+// never flagged. No-op when the watchlist is empty.
+func (d *Detector) checkTyposquat(domain string) Result {
+	if len(d.brands) == 0 {
+		return Result{}
+	}
+	// Preserve the existing CDN/infrastructure allowlist behaviour.
+	if isInfraDomain(domain) {
+		return Result{}
+	}
+
+	decoded := decodePunycodeDomain(domain)
+	label, tld := registrableParts(decoded)
+	if label == "" {
+		return Result{}
+	}
+	fullReg := strings.ToLower(label) + "." + tld
+	lowerLabel := strings.ToLower(label)
+	skel := confusableSkeleton(label)
+	if skel == "" {
+		return Result{}
+	}
+
+	for _, b := range d.brands {
+		// Never flag the exact brand itself (or its subdomains, which share the
+		// registrable domain).
+		if fullReg == b.domain {
+			continue
+		}
+
+		if skel == b.label {
+			// Skeleton collapses onto the brand. If the raw ASCII label already
+			// equals the brand label this is just a different TLD (not a
+			// lookalike) — skip it. Otherwise it is a confusable/homoglyph.
+			if lowerLabel != b.label {
+				return d.typosquatResult(domain, b.domain, "homoglyph/confusable lookalike")
+			}
+			continue
+		}
+
+		dist := damerauLevenshtein(skel, b.label)
+		if dist >= 1 && dist <= d.typoMaxDistance {
+			return d.typosquatResult(domain, b.domain, fmt.Sprintf("edit distance %d from brand label", dist))
+		}
+	}
+	return Result{}
+}
+
+func (d *Detector) typosquatResult(domain, brand, why string) Result {
+	return Result{
+		IsSuspicious:    true,
+		ThreatScore:     0.85,
+		DetectionMethod: "typosquat",
+		Reason:          fmt.Sprintf("lookalike of protected brand %q (%s)", brand, why),
+		Block:           d.blockTyposquat,
+	}
+}
+
+// damerauLevenshtein returns the optimal string alignment (Damerau/Levenshtein)
+// edit distance between a and b, counting insertions, deletions, substitutions
+// and adjacent transpositions each as a single edit.
+func damerauLevenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	la, lb := len(ra), len(rb)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev2 := make([]int, lb+1)
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			curr[j] = min3(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+			if i > 1 && j > 1 && ra[i-1] == rb[j-2] && ra[i-2] == rb[j-1] {
+				if t := prev2[j-2] + 1; t < curr[j] {
+					curr[j] = t
+				}
+			}
+		}
+		prev2, prev, curr = prev, curr, prev2
+	}
+	return prev[lb]
+}
+
+func min3(a, b, c int) int {
+	m := a
+	if b < m {
+		m = b
+	}
+	if c < m {
+		m = c
+	}
+	return m
 }
