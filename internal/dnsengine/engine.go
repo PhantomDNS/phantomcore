@@ -621,7 +621,9 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	// --- Step 2: Evaluate policy ---
-	decision, err := e.policyEngine.Evaluate(domainName)
+	// Thread the client IP so per-client scoped policies (I-014) apply only
+	// to matching clients; unscoped policies still apply to everyone.
+	decision, err := e.policyEngine.Evaluate(domainName, clientIP)
 	if err != nil {
 		logger.Log.Error("Failed to evaluate policy: " + err.Error())
 		e.logQuery(domainName, clientIP, "error", "", threatResult)

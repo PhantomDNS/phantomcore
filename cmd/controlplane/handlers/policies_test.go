@@ -101,7 +101,7 @@ func TestPolicyCRUDLifecycle(t *testing.T) {
 	}
 
 	// Engine reflects the new BLOCK rule?
-	if d, _ := h.PolicyEngine.Evaluate("ads.example.com"); d.Action != policy.ActionDeny {
+	if d, _ := h.PolicyEngine.Evaluate("ads.example.com", ""); d.Action != policy.ActionDeny {
 		t.Fatalf("engine: expected Deny for ads.example.com, got %v", d.Action)
 	}
 
@@ -137,7 +137,7 @@ func TestPolicyCRUDLifecycle(t *testing.T) {
 		t.Fatalf("expected stored action ALLOW after update, got %s", stored.Action)
 	}
 	// Engine now allows the same domain.
-	if d, _ := h.PolicyEngine.Evaluate("ads.example.com"); d.Action != policy.ActionAllow {
+	if d, _ := h.PolicyEngine.Evaluate("ads.example.com", ""); d.Action != policy.ActionAllow {
 		t.Fatalf("engine: expected Allow after update, got %v", d.Action)
 	}
 
@@ -150,7 +150,7 @@ func TestPolicyCRUDLifecycle(t *testing.T) {
 		t.Fatal("expected policy gone after delete")
 	}
 	// Engine reflects removal (default Allow).
-	if d, _ := h.PolicyEngine.Evaluate("ads.example.com"); d.Action != policy.ActionAllow {
+	if d, _ := h.PolicyEngine.Evaluate("ads.example.com", ""); d.Action != policy.ActionAllow {
 		t.Fatalf("engine: expected Allow after delete, got %v", d.Action)
 	}
 }
@@ -183,7 +183,7 @@ func TestPolicyPatchPartialAndRegexes(t *testing.T) {
 	}
 
 	// Engine blocks/redirects the initial domain.
-	if d, _ := h.PolicyEngine.Evaluate("old.example.com"); d.Action != policy.ActionRedirect {
+	if d, _ := h.PolicyEngine.Evaluate("old.example.com", ""); d.Action != policy.ActionRedirect {
 		t.Fatalf("engine: expected Redirect for old.example.com, got %v", d.Action)
 	}
 
@@ -201,10 +201,10 @@ func TestPolicyPatchPartialAndRegexes(t *testing.T) {
 	}
 
 	// Engine now matches the new domain, not the old one.
-	if d, _ := h.PolicyEngine.Evaluate("new.example.com"); d.Action != policy.ActionRedirect {
+	if d, _ := h.PolicyEngine.Evaluate("new.example.com", ""); d.Action != policy.ActionRedirect {
 		t.Fatalf("engine: expected Redirect for new.example.com, got %v", d.Action)
 	}
-	if d, _ := h.PolicyEngine.Evaluate("old.example.com"); d.Action != policy.ActionAllow {
+	if d, _ := h.PolicyEngine.Evaluate("old.example.com", ""); d.Action != policy.ActionAllow {
 		t.Fatalf("engine: expected Allow for old.example.com after domain change, got %v", d.Action)
 	}
 }
@@ -367,7 +367,7 @@ func TestPolicyScheduleEngineActive(t *testing.T) {
 	if w := doReq(t, rIn, http.MethodPost, "/api/v1/policies", create); w.Code != http.StatusCreated {
 		t.Fatalf("create in-window: got %d body=%s", w.Code, w.Body.String())
 	}
-	if d, _ := hIn.PolicyEngine.Evaluate("social.example.com"); d.Action != policy.ActionDeny {
+	if d, _ := hIn.PolicyEngine.Evaluate("social.example.com", ""); d.Action != policy.ActionDeny {
 		t.Fatalf("engine: expected Deny inside window, got %v", d.Action)
 	}
 
@@ -376,7 +376,7 @@ func TestPolicyScheduleEngineActive(t *testing.T) {
 	if w := doReq(t, rOut, http.MethodPost, "/api/v1/policies", create); w.Code != http.StatusCreated {
 		t.Fatalf("create out-window: got %d body=%s", w.Code, w.Body.String())
 	}
-	if d, _ := hOut.PolicyEngine.Evaluate("social.example.com"); d.Action != policy.ActionAllow {
+	if d, _ := hOut.PolicyEngine.Evaluate("social.example.com", ""); d.Action != policy.ActionAllow {
 		t.Fatalf("engine: expected Allow outside window, got %v", d.Action)
 	}
 }
@@ -394,5 +394,95 @@ func TestPolicyCreateInvalidSchedule(t *testing.T) {
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid timezone, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestPolicyClientScopeCreateAndEngine verifies client_cidrs round-trips
+// through the API (create -> get) and that the running engine applies the
+// scoped policy per-client: an in-scope client is blocked, an out-of-scope
+// client is allowed (I-014).
+func TestPolicyClientScopeCreateAndEngine(t *testing.T) {
+	r, h := setupPolicyTest(t)
+
+	w := doReq(t, r, http.MethodPost, "/api/v1/policies", CreatePolicyRequest{
+		ID:          "kids-social",
+		Name:        "Block social for kids subnet",
+		Action:      "BLOCK",
+		Domains:     []string{"social.example.com"},
+		ClientCIDRs: []string{"192.168.10.0/24"},
+		Priority:    100,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// client_cidrs round-trips through create response.
+	var created ResponsePolicySingle
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if len(created.Data.ClientCIDRs) != 1 || created.Data.ClientCIDRs[0] != "192.168.10.0/24" {
+		t.Fatalf("client_cidrs not returned: %+v", created.Data.ClientCIDRs)
+	}
+
+	// ...and through GET (i.e. persisted).
+	w = doReq(t, r, http.MethodGet, "/api/v1/policies/kids-social", nil)
+	var got ResponsePolicySingle
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if len(got.Data.ClientCIDRs) != 1 || got.Data.ClientCIDRs[0] != "192.168.10.0/24" {
+		t.Fatalf("client_cidrs not persisted: %+v", got.Data.ClientCIDRs)
+	}
+
+	// Engine applies the scope per-client.
+	if d, _ := h.PolicyEngine.Evaluate("social.example.com", "192.168.10.5:53"); d.Action != policy.ActionDeny {
+		t.Fatalf("engine: expected Deny for in-scope client, got %v", d.Action)
+	}
+	if d, _ := h.PolicyEngine.Evaluate("social.example.com", "192.168.20.5:53"); d.Action != policy.ActionAllow {
+		t.Fatalf("engine: expected Allow for out-of-scope client, got %v", d.Action)
+	}
+}
+
+// TestPolicyClientScopeInvalid verifies an unparseable client scope is rejected
+// on create and never persisted.
+func TestPolicyClientScopeInvalid(t *testing.T) {
+	r, h := setupPolicyTest(t)
+	w := doReq(t, r, http.MethodPost, "/api/v1/policies", CreatePolicyRequest{
+		ID:          "bad-scope",
+		Name:        "Bad scope",
+		Action:      "BLOCK",
+		Domains:     []string{"x.com"},
+		ClientCIDRs: []string{"999.999.0.0/24"},
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid client scope, got %d body=%s", w.Code, w.Body.String())
+	}
+	if _, err := h.Store.Policies.GetByID("bad-scope"); err == nil {
+		t.Fatal("expected policy with invalid scope not to be persisted")
+	}
+}
+
+// TestPolicyClientScopePatchClears verifies PATCHing client_cidrs to an empty
+// list clears the scope so the policy becomes unscoped (applies to all).
+func TestPolicyClientScopePatchClears(t *testing.T) {
+	r, h := setupPolicyTest(t)
+	doReq(t, r, http.MethodPost, "/api/v1/policies", CreatePolicyRequest{
+		ID: "scoped", Name: "Scoped", Action: "BLOCK",
+		Domains: []string{"ads.example.com"}, ClientCIDRs: []string{"192.168.1.0/24"}, Priority: 100,
+	})
+	// Out-of-scope client initially allowed.
+	if d, _ := h.PolicyEngine.Evaluate("ads.example.com", "10.0.0.1:53"); d.Action != policy.ActionAllow {
+		t.Fatalf("pre-clear: expected Allow for out-of-scope client, got %v", d.Action)
+	}
+
+	w := doReq(t, r, http.MethodPatch, "/api/v1/policies/scoped", map[string]interface{}{
+		"client_cidrs": []string{},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch: expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// Now unscoped: the same client is blocked.
+	if d, _ := h.PolicyEngine.Evaluate("ads.example.com", "10.0.0.1:53"); d.Action != policy.ActionDeny {
+		t.Fatalf("post-clear: expected Deny for all clients, got %v", d.Action)
 	}
 }

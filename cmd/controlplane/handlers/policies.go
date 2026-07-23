@@ -21,6 +21,9 @@ type Policy struct {
 	RedirectIP  string   `json:"redirect_ip,omitempty"`
 	Domains     []string `json:"domains"`
 	Regexes     []string `json:"regexes"`
+	// ClientCIDRs scopes the policy to specific clients by IP/CIDR (I-014).
+	// Empty means the policy applies to all clients.
+	ClientCIDRs []string `json:"client_cidrs"`
 	Priority    int      `json:"priority"`
 	Enabled     bool     `json:"enabled"`
 
@@ -59,6 +62,8 @@ type CreatePolicyRequest struct {
 	RedirectIP  string   `json:"redirect_ip"`
 	Domains     []string `json:"domains" binding:"required"`
 	Regexes     []string `json:"regexes"`
+	// ClientCIDRs optionally scopes the policy to specific clients (I-014).
+	ClientCIDRs []string `json:"client_cidrs"`
 	Priority    int      `json:"priority"`
 
 	// Optional schedule (I-038). Omit for an always-on policy.
@@ -80,6 +85,9 @@ type UpdatePolicyRequest struct {
 	RedirectIP  *string   `json:"redirect_ip"`
 	Domains     *[]string `json:"domains"`
 	Regexes     *[]string `json:"regexes"`
+	// ClientCIDRs edits the client scope; nil leaves it unchanged, an empty
+	// slice clears it (policy becomes unscoped) (I-014).
+	ClientCIDRs *[]string `json:"client_cidrs"`
 	Priority    *int      `json:"priority"`
 	Enabled     *bool     `json:"enabled"`
 
@@ -92,7 +100,7 @@ type UpdatePolicyRequest struct {
 }
 
 func policyFromModel(m models.Policy) Policy {
-	var domains, regexes, scheduleDays []string
+	var domains, regexes, scheduleDays, clientCIDRs []string
 	if m.Domains != "" {
 		_ = json.Unmarshal([]byte(m.Domains), &domains)
 	}
@@ -101,6 +109,9 @@ func policyFromModel(m models.Policy) Policy {
 	}
 	if m.ScheduleDays != "" {
 		_ = json.Unmarshal([]byte(m.ScheduleDays), &scheduleDays)
+	}
+	if m.ClientCIDRs != "" {
+		_ = json.Unmarshal([]byte(m.ClientCIDRs), &clientCIDRs)
 	}
 	return Policy{
 		ID:           m.ID,
@@ -111,6 +122,7 @@ func policyFromModel(m models.Policy) Policy {
 		RedirectIP:   m.RedirectIP,
 		Domains:      domains,
 		Regexes:      regexes,
+		ClientCIDRs:  clientCIDRs,
 		Priority:     m.Priority,
 		Enabled:      m.Enabled,
 		ScheduleDays: scheduleDays,
@@ -205,6 +217,7 @@ func (h *APIHandler) CreatePolicy(c *gin.Context) {
 
 	domainsJSON, _ := json.Marshal(req.Domains)
 	regexesJSON, _ := json.Marshal(req.Regexes)
+	clientCIDRsJSON, _ := json.Marshal(req.ClientCIDRs)
 
 	m := &models.Policy{
 		ID:          req.ID,
@@ -215,6 +228,7 @@ func (h *APIHandler) CreatePolicy(c *gin.Context) {
 		RedirectIP:  req.RedirectIP,
 		Domains:     string(domainsJSON),
 		Regexes:     string(regexesJSON),
+		ClientCIDRs: string(clientCIDRsJSON),
 		Priority:    req.Priority,
 		Enabled:     true,
 
@@ -289,6 +303,10 @@ func (h *APIHandler) UpdatePolicy(c *gin.Context) {
 	if req.Regexes != nil {
 		regexesJSON, _ := json.Marshal(*req.Regexes)
 		m.Regexes = string(regexesJSON)
+	}
+	if req.ClientCIDRs != nil {
+		clientCIDRsJSON, _ := json.Marshal(*req.ClientCIDRs)
+		m.ClientCIDRs = string(clientCIDRsJSON)
 	}
 	if req.Priority != nil {
 		m.Priority = *req.Priority
