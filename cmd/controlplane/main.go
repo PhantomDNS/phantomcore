@@ -10,6 +10,7 @@ import (
 	"github.com/lopster568/phantomDNS/cmd/controlplane/routes"
 	"github.com/lopster568/phantomDNS/internal/config"
 	client "github.com/lopster568/phantomDNS/internal/grpc/controlplane"
+	"github.com/lopster568/phantomDNS/internal/inventory"
 	"github.com/lopster568/phantomDNS/internal/storage/db"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 
@@ -39,8 +40,14 @@ func main() {
 	}
 	c.SetAcceptQueries(state.DNSEnabled)
 
+	// Passive LAN device inventory (disabled by default; configured via
+	// INVENTORY_ENABLED and DHCP_LEASES_PATH).
+	deviceInventory := inventory.New(inventory.ConfigFromEnv(), nil)
+	deviceInventory.Start()
+	defer deviceInventory.Stop()
+
 	// Initialize Gin router
-	apiHandler := handlers.NewAPIHandler(*repos, c)
+	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory)
 	r := gin.Default()
 	r.Use(middlewares.Logger())
 
