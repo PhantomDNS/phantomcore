@@ -13,4 +13,5 @@ type DNSQuery struct {
 	ThreatScore     float64   `gorm:"default:0"`
 	DetectionMethod string    `gorm:"default:''"`
 	ThreatReason    string    `gorm:"default:''"`
+	BlockReason     string    `gorm:"default:''"` // why the query was blocked/redirected: "blocklist", a policy ID, "redirect:<policyID>", a threat method, or "" for allow
 }

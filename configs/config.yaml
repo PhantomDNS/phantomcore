@@ -6,6 +6,25 @@ dataplane:
   anonymization:
     secret: "${PHANTOM_ANON_SECRET:-change-me-in-production}"
   blocklist_update_interval: "6h"
+  # Threat-score enforcement for the heuristic detector (DGA / entropy / tunneling).
+  # 0 disables enforcement — the detector still scores and logs (historical default).
+  # Set a value in (0, 1], e.g. 0.8, to block queries scored at or above it.
+  # threat_block_dryrun logs would-be blocks without blocking (safe rollout).
+  # Env overrides: THREAT_BLOCK_THRESHOLD, THREAT_BLOCK_DRYRUN.
+  threat_block_threshold: 0
+  threat_block_dryrun: false
+  # Reject upstream answers that map a public name to a private/loopback/
+  # link-local IP (DNS rebinding defense). Env override: REBIND_PROTECTION.
+  rebind_protection: false
+  # Optional per-client DNS query rate limit (queries/sec per client IP).
+  # 0 disables it (default). Env override: CLIENT_RATE_LIMIT_PER_SEC.
+  client_rate_limit_per_sec: 0
+  # Rewrite well-known search/video hosts to their enforced-safe targets
+  # (Google/Bing/DuckDuckGo SafeSearch, YouTube Restricted Mode). Env: SAFE_SEARCH.
+  safe_search: false
+  # Enable DNS 0x20 case-randomization on outbound upstream queries
+  # (anti-spoofing hardening). Default false. Env override: DNS_0X20.
+  dns_0x20: false
   grpc_server:
     port: 50051
     listen_addr: "localhost:50051"
