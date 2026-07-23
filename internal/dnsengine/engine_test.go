@@ -64,6 +64,34 @@ func (m *mockQueryLog) List(filter repositories.QueryLogFilter) ([]models.DNSQue
 	return nil, 0, nil
 }
 
+func (m *mockQueryLog) TopClients(w repositories.AnalyticsWindow) ([]repositories.ClientActivity, error) {
+	return nil, nil
+}
+
+func (m *mockQueryLog) TopBlockedDomains(w repositories.AnalyticsWindow) ([]repositories.DomainCount, error) {
+	return nil, nil
+}
+
+func (m *mockQueryLog) CategoryBreakdown(w repositories.AnalyticsWindow) ([]repositories.CategoryCount, error) {
+	return nil, nil
+}
+
+func (m *mockQueryLog) ClientTimeline(clientIP string, w repositories.AnalyticsWindow) ([]repositories.TimeBucket, error) {
+	return nil, nil
+}
+
+func (m *mockQueryLog) CategoryHourHeatmap(w repositories.AnalyticsWindow) ([]repositories.HeatmapCell, error) {
+	return nil, nil
+}
+
+func (m *mockQueryLog) GatherWindowStats(w repositories.AnalyticsWindow) (repositories.WindowStats, error) {
+	return repositories.WindowStats{}, nil
+}
+
+func (m *mockQueryLog) AnomalyDigestBetween(current, prior repositories.AnalyticsWindow, cfg repositories.AnomalyThresholds) (repositories.AnomalyDigest, error) {
+	return repositories.AnomalyDigest{}, nil
+}
+
 // waitSaved blocks until logQuery's goroutine persists a row (or times out).
 func (m *mockQueryLog) waitSaved(t *testing.T) *models.DNSQuery {
 	t.Helper()
