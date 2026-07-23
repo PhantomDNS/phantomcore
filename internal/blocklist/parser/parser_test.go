@@ -80,3 +80,54 @@ func TestRegistry_GetUnknown(t *testing.T) {
 		t.Error("expected false for nonexistent parser")
 	}
 }
+
+func TestDomainsParser_Parse(t *testing.T) {
+	input := []byte(`# comment line
+evil.com
+Bad-Domain.NET.
+
+*.wildcard.org
+with.extra columns.here
+; semicolon comment
+   spaced.example.com
+`)
+
+	p := &DomainsParser{}
+	entries, err := p.Parse(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"evil.com", "bad-domain.net", "wildcard.org", "with.extra", "spaced.example.com"}
+	if len(entries) != len(want) {
+		t.Fatalf("expected %d entries, got %d", len(want), len(entries))
+	}
+	for i, e := range entries {
+		if e.Domain != want[i] {
+			t.Errorf("entry[%d] = %q, want %q", i, e.Domain, want[i])
+		}
+	}
+}
+
+func TestDomainsParser_EmptyAndCommentsOnly(t *testing.T) {
+	p := &DomainsParser{}
+	for _, in := range [][]byte{[]byte(""), []byte("# only\n; comments\n\n")} {
+		entries, err := p.Parse(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("expected 0 entries, got %d", len(entries))
+		}
+	}
+}
+
+func TestDomainsParser_Registered(t *testing.T) {
+	p, ok := Get("domains")
+	if !ok {
+		t.Fatal("domains parser not registered")
+	}
+	if p.Format() != "domains" {
+		t.Errorf("unexpected format: %s", p.Format())
+	}
+}

@@ -116,6 +116,11 @@ type DataPlaneConfig struct {
 	HeartbeatInterval string `yaml:"heartbeat_interval"`
 
 	GeoIP GeoIPConfig `yaml:"geoip"`
+
+	// Newly-registered-domain (NRD) feed. Empty NRDFeedURL leaves NRD inert.
+	NRDFeedURL         string `yaml:"nrd_feed_url"`
+	NRDBlock           bool   `yaml:"nrd_block"`
+	NRDRefreshInterval string `yaml:"nrd_refresh_interval"`
 }
 
 // GeoIPConfig configures optional ASN/GeoIP answer filtering. It is disabled
@@ -229,6 +234,7 @@ func defaultConfig() *Config {
 			FastFluxDetection:        false,
 			FastFluxIPThreshold:      8,
 			FastFluxTTLMaxSec:        300,
+			NRDRefreshInterval:       "6h",
 			GRPCServer: GRPCServerConfig{
 				Port:       50051,
 				ListenAddr: "localhost:50051",
@@ -387,6 +393,19 @@ var DefaultConfig = func() *Config {
 		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
 			cfg.DataPlane.GeoIP.Block = b
 		}
+	}
+	if url := os.Getenv("NRD_FEED_URL"); url != "" {
+		cfg.DataPlane.NRDFeedURL = url
+	}
+	if v := os.Getenv("NRD_BLOCK"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.DataPlane.NRDBlock = b
+		} else {
+			logger.Log.Warnf("Invalid NRD_BLOCK value %q, ignoring", v)
+		}
+	}
+	if interval := os.Getenv("NRD_REFRESH_INTERVAL"); interval != "" {
+		cfg.DataPlane.NRDRefreshInterval = interval
 	}
 	return cfg
 }()
