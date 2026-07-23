@@ -21,8 +21,11 @@ type QueryMetrics struct {
 	windowSize time.Duration
 	sliceSize  time.Duration
 
-	slices  []metricsSlice
-	current atomic.Uint32
+	slices []metricsSlice
+	// sliceCount mirrors len(slices) as a uint32, computed once so the
+	// rotation path in currentSlice never has to convert an int length.
+	sliceCount uint32
+	current    atomic.Uint32
 }
 
 const (
@@ -40,11 +43,19 @@ type AggregatedMetrics struct {
 
 func NewQueryMetrics() *QueryMetrics {
 	sliceCount := int(defaultWindowSize / defaultSliceSize)
+	// sliceCount is a fixed, small constant derived from the window/slice
+	// duration constants above (10 with the current defaults); it can never
+	// approach uint32's range, but guard the conversion explicitly rather
+	// than assume it.
+	if sliceCount <= 0 || sliceCount > math.MaxUint32 {
+		sliceCount = 1
+	}
 
 	m := &QueryMetrics{
 		windowSize: defaultWindowSize,
 		sliceSize:  defaultSliceSize,
 		slices:     make([]metricsSlice, sliceCount),
+		sliceCount: uint32(sliceCount),
 	}
 
 	now := time.Now().Unix()
@@ -66,15 +77,17 @@ func (m *QueryMetrics) currentSlice() *metricsSlice {
 		return s
 	}
 
-	// Rotate to next slice
-	next := (idx + 1) % len(m.slices)
+	// Rotate to next slice. Computed natively in uint32 (the type m.current
+	// stores) against the precomputed sliceCount, so there is no int->uint32
+	// narrowing conversion on this path.
+	next := (m.current.Load() + 1) % m.sliceCount
 
 	// Reset the next slice
 	m.slices[next] = metricsSlice{
 		startUnix: now,
 	}
 
-	m.current.Store(uint32(next))
+	m.current.Store(next)
 	return &m.slices[next]
 }
 

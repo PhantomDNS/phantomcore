@@ -3,6 +3,7 @@ package dataplane
 
 import (
 	"context"
+	"time"
 
 	"github.com/lopster568/phantomDNS/internal/dnsengine"
 	pb "github.com/lopster568/phantomDNS/internal/gen/proto/phantomdns/v1"
@@ -37,8 +38,19 @@ func (s *MetricsService) GetLiveQueryMetrics(
 		TotalQueries: agg.Total,
 		ErrorQueries: agg.Errors,
 
-		P50Ms: uint64(p50.Milliseconds()),
-		P95Ms: uint64(p95.Milliseconds()),
-		P99Ms: uint64(p99.Milliseconds()),
+		P50Ms: durationMsToUint64(p50),
+		P95Ms: durationMsToUint64(p95),
+		P99Ms: durationMsToUint64(p99),
 	}, nil
+}
+
+// durationMsToUint64 converts a duration (always non-negative here, since it
+// comes from metrics.EstimatePercentile) to milliseconds as uint64, guarding
+// against a negative value rather than assuming the caller's invariant holds.
+func durationMsToUint64(d time.Duration) uint64 {
+	ms := d.Milliseconds()
+	if ms < 0 {
+		return 0
+	}
+	return uint64(ms)
 }

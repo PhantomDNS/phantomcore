@@ -88,9 +88,9 @@ func buildSnapshot(policies []Policy) *PolicySnapshot {
 		// are skipped here; the loader/control-plane validate on ingest, so a
 		// bad range means "no valid ranges" and the scoped policy simply never
 		// matches (fail-closed for scope, not for the whole policy set).
-		for _, c := range policies[i].ClientCIDRs {
+		for _, c := range p.ClientCIDRs {
 			if n, err := parseClientScope(c); err == nil {
-				clientNets[policies[i].ID] = append(clientNets[policies[i].ID], n)
+				clientNets[p.ID] = append(clientNets[p.ID], n)
 			}
 		}
 	}
@@ -108,10 +108,11 @@ func buildSnapshot(policies []Policy) *PolicySnapshot {
 
 	// add raw domains with wildcard and plain regex tokens as strings
 	for i := range policies {
-		for _, d := range policies[i].Domains {
+		p := &policies[i]
+		for _, d := range p.Domains {
 			bf.AddString(normalizeDomain(d))
 		}
-		for _, r := range policies[i].Regexes {
+		for _, r := range p.Regexes {
 			bf.AddString(r)
 		}
 	}

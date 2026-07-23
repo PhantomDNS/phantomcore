@@ -110,7 +110,7 @@ func EnsureSelfSigned(dir string, hosts []string) (certFile, keyFile string, err
 		return certFile, keyFile, nil
 	}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", "", fmt.Errorf("create cert directory: %w", err)
 	}
 
@@ -119,7 +119,10 @@ func EnsureSelfSigned(dir string, hosts []string) (certFile, keyFile string, err
 		return "", "", err
 	}
 
-	if err := os.WriteFile(certFile, certPEM, 0o644); err != nil {
+	// Only this process reads certFile (via r.RunTLS below); it does not need
+	// to be world-readable, so it is written with the same restrictive mode
+	// as the key.
+	if err := os.WriteFile(certFile, certPEM, 0o600); err != nil {
 		return "", "", fmt.Errorf("write certificate: %w", err)
 	}
 	// The private key is written with restrictive permissions.

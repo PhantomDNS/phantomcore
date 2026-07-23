@@ -5,6 +5,7 @@
 package diskhealth
 
 import (
+	"fmt"
 	"syscall"
 	"time"
 )
@@ -19,7 +20,11 @@ func readDiskStat(dir string) (diskStat, error) {
 		return diskStat{}, err
 	}
 
-	// Bsize is signed on some platforms; normalise to uint64.
+	// Bsize is signed on some platforms; normalise to uint64. Guard against a
+	// negative value (never expected from a real filesystem) before the cast.
+	if fs.Bsize < 0 {
+		return diskStat{}, fmt.Errorf("readDiskStat: negative block size %d from statfs", fs.Bsize)
+	}
 	bsize := uint64(fs.Bsize)
 	total := uint64(fs.Blocks) * bsize
 	free := uint64(fs.Bavail) * bsize

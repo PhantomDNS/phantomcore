@@ -3,6 +3,7 @@ package config
 // SPDX-License-Identifier: GPL-3.0-or-later
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -250,7 +251,10 @@ func defaultConfig() *Config {
 }
 
 func loadConfig(path string) *Config {
-	data, err := os.ReadFile(path)
+	// path comes from PHANTOM_CONFIG or the fixed default location, both
+	// operator-controlled, not request input. Reading an arbitrary path here
+	// is by design; filepath.Clean normalizes it before use.
+	data, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 -- operator-supplied config file path, by design
 	if err != nil {
 		logger.Log.Warnf("Config file not found (%s), using defaults", path)
 		return defaultConfig()

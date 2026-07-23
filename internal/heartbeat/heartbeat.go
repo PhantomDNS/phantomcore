@@ -193,7 +193,11 @@ func (r *Reporter) reportOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("post heartbeat: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			logger.Log.Warnf("heartbeat: response body close error: %v", cerr)
+		}
+	}()
 
 	if resp.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("heartbeat collector returned status %d", resp.StatusCode)
@@ -309,6 +313,9 @@ func diskUsage(path string) (free, total uint64, err error) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(path, &st); err != nil {
 		return 0, 0, err
+	}
+	if st.Bsize < 0 {
+		return 0, 0, fmt.Errorf("diskUsage: negative block size %d from statfs", st.Bsize)
 	}
 	bsize := uint64(st.Bsize)
 	return st.Bavail * bsize, st.Blocks * bsize, nil
