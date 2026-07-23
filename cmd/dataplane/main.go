@@ -9,6 +9,7 @@ import (
 
 	"github.com/lopster568/phantomDNS/internal/blocklist"
 	"github.com/lopster568/phantomDNS/internal/config"
+	"github.com/lopster568/phantomDNS/internal/diskhealth"
 	"github.com/lopster568/phantomDNS/internal/dnsengine"
 	dataplanegrpc "github.com/lopster568/phantomDNS/internal/grpc/dataplane"
 	"github.com/lopster568/phantomDNS/internal/logger"
@@ -27,6 +28,13 @@ func main() {
 		dbPath = p
 	}
 	db.InitDB(dbPath)
+
+	// 1b. Disk / SD-card health monitor (best-effort, non-fatal). Watches free
+	// space and growth on the data path; expose diskMon.Status() from a
+	// health / heartbeat surface. Configured via DISK_HEALTH_INTERVAL and
+	// DISK_MIN_FREE_PERCENT.
+	diskMon := diskhealth.NewMonitorFromEnv(dbPath)
+	go diskMon.Run(context.Background())
 
 	// 2. Initialize Repositories
 	repos := repositories.NewStore(db.DB)
