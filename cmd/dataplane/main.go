@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/lopster568/phantomDNS/internal/blocklist"
@@ -65,6 +66,11 @@ func main() {
 			cancel()
 		}
 	}()
+
+	// 3b. Blocklist source health monitoring — flags dead, collapsed, or stale
+	// sources on an interval. Non-fatal; results are retained for status/heartbeat.
+	healthChecker := blocklist.NewHealthChecker(repos.Blocklist, blocklist.DefaultHealthThresholds(), time.Now)
+	go healthChecker.Run(context.Background(), healthInterval(config.DefaultConfig.DataPlane.BlocklistHealthInterval))
 
 	// 4. Initialize Policy Engine — load from file + DB
 	policyEngine := policy.NewPolicyEngine()
@@ -135,6 +141,24 @@ func main() {
 
 	logger.Log.Infof("DNS server listening on %s", config.DefaultConfig.DataPlane.ListenAddr)
 	srv.Run()
+}
+
+// healthInterval parses the configured blocklist health interval. "off", "0",
+// "disabled", or an empty value turn the periodic monitor off (a single check
+// still runs); an unparseable value falls back to 1h.
+func healthInterval(v string) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+		return time.Hour
+	case "off", "0", "disabled":
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		logger.Log.Warnf("invalid BLOCKLIST_HEALTH_INTERVAL %q, using 1h", v)
+		return time.Hour
+	}
+	return d
 }
 
 func refreshBlocklists(ctx context.Context, engine *blocklist.Engine, repo repositories.BlocklistRepository) {
