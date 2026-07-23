@@ -3,6 +3,7 @@ package config
 // SPDX-License-Identifier: GPL-3.0-or-later
 import (
 	"os"
+	"strconv"
 
 	"github.com/lopster568/phantomDNS/internal/logger"
 	"gopkg.in/yaml.v3"
@@ -23,6 +24,14 @@ type DataPlaneConfig struct {
 	UpstreamResolvers       []string         `yaml:"upstream_resolvers"`
 	GRPCServer              GRPCServerConfig `yaml:"grpc_server"`
 	BlocklistUpdateInterval string           `yaml:"blocklist_update_interval"`
+
+	// ThreatBlockThreshold enables enforcement of the heuristic threat detector.
+	// When > 0, a query scored suspicious with ThreatScore >= threshold is blocked
+	// (or logged as a would-be block when ThreatBlockDryRun is set). 0 disables
+	// enforcement, preserving the historical log-only behaviour.
+	ThreatBlockThreshold float64 `yaml:"threat_block_threshold"`
+	// ThreatBlockDryRun logs would-be threat blocks without actually blocking.
+	ThreatBlockDryRun bool `yaml:"threat_block_dryrun"`
 }
 
 type ControlPlaneConfig struct {
@@ -69,6 +78,20 @@ var DefaultConfig = func() *Config {
 	}
 	if interval := os.Getenv("BLOCKLIST_UPDATE_INTERVAL"); interval != "" {
 		cfg.DataPlane.BlocklistUpdateInterval = interval
+	}
+	if v := os.Getenv("THREAT_BLOCK_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.DataPlane.ThreatBlockThreshold = f
+		} else {
+			logger.Log.Warnf("Invalid THREAT_BLOCK_THRESHOLD %q, ignoring: %v", v, err)
+		}
+	}
+	if v := os.Getenv("THREAT_BLOCK_DRYRUN"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.DataPlane.ThreatBlockDryRun = b
+		} else {
+			logger.Log.Warnf("Invalid THREAT_BLOCK_DRYRUN %q, ignoring: %v", v, err)
+		}
 	}
 	return cfg
 }()

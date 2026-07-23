@@ -6,6 +6,7 @@ import (
 
 	"github.com/lopster568/phantomDNS/internal/metrics"
 	"github.com/lopster568/phantomDNS/internal/policy"
+	"github.com/lopster568/phantomDNS/internal/threat"
 	"github.com/miekg/dns"
 )
 
@@ -335,5 +336,74 @@ func TestSetAcceptQueries(t *testing.T) {
 	e.SetAcceptQueries(true)
 	if !e.state.acceptQueries.Load() {
 		t.Error("expected true after SetAcceptQueries(true)")
+	}
+}
+
+func TestShouldEnforceThreat(t *testing.T) {
+	tests := []struct {
+		name      string
+		tr        threat.Result
+		threshold float64
+		want      bool
+	}{
+		{"threshold 0 disables", threat.Result{IsSuspicious: true, ThreatScore: 0.9}, 0, false},
+		{"above threshold", threat.Result{IsSuspicious: true, ThreatScore: 0.9}, 0.8, true},
+		{"equal to threshold", threat.Result{IsSuspicious: true, ThreatScore: 0.8}, 0.8, true},
+		{"below threshold", threat.Result{IsSuspicious: true, ThreatScore: 0.7}, 0.8, false},
+		{"not suspicious", threat.Result{IsSuspicious: false, ThreatScore: 0.9}, 0.8, false},
+	}
+	for _, tt := range tests {
+		if got := shouldEnforceThreat(tt.tr, tt.threshold); got != tt.want {
+			t.Errorf("%s: shouldEnforceThreat = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestThreatDecision(t *testing.T) {
+	sus := threat.Result{IsSuspicious: true, ThreatScore: 0.9}
+
+	if got := (&Engine{threatBlockThreshold: 0}).threatDecision(sus); got != threatNone {
+		t.Errorf("threshold 0: want threatNone, got %v", got)
+	}
+	if got := (&Engine{threatBlockThreshold: 0.8}).threatDecision(sus); got != threatBlock {
+		t.Errorf("enforce: want threatBlock, got %v", got)
+	}
+	if got := (&Engine{threatBlockThreshold: 0.8, threatBlockDryRun: true}).threatDecision(sus); got != threatDryRun {
+		t.Errorf("dry-run: want threatDryRun, got %v", got)
+	}
+}
+
+func TestProcessDNSQuery_ThreatBlockEnforced(t *testing.T) {
+	// A long hex label scores dga_hex (0.9). With enforcement on and no
+	// blocklist/policy match, it must be blocked — this returns before any
+	// upstream forward, so no UpstreamManager is required.
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.threatDetector = threat.NewDetector()
+	e.threatBlockThreshold = 0.8
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("abcdef0123456789.example.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected a response for the suspicious domain")
+	}
+	if !isBlockedResponse(w.msg) {
+		t.Errorf("expected suspicious domain blocked (0.0.0.0), got rcode %d", w.msg.Rcode)
+	}
+}
+
+func TestProcessDNSQuery_ThreatBlockDisabledByDefault(t *testing.T) {
+	// With the default threshold of 0, the detector must not enforce even on a
+	// clearly suspicious domain (verified at the decision layer to avoid the
+	// upstream-forward path, which needs a real UpstreamManager).
+	e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, nil)
+	e.threatDetector = threat.NewDetector()
+
+	sus := e.threatDetector.Analyze("abcdef0123456789.example.com")
+	if !sus.IsSuspicious {
+		t.Fatal("test precondition: expected the sample domain to be flagged suspicious")
+	}
+	if got := e.threatDecision(sus); got != threatNone {
+		t.Errorf("default threshold (0) must not enforce, got %v", got)
 	}
 }
