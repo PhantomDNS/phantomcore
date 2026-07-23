@@ -23,6 +23,12 @@ type Policy struct {
 	Regexes     []string `json:"regexes"`
 	Priority    int      `json:"priority"`
 	Enabled     bool     `json:"enabled"`
+
+	// Optional schedule (I-038). Empty fields mean the policy is always active.
+	ScheduleDays []string `json:"schedule_days,omitempty"`
+	StartTime    string   `json:"start_time,omitempty"`
+	EndTime      string   `json:"end_time,omitempty"`
+	Timezone     string   `json:"timezone,omitempty"`
 }
 
 type PolicyListData struct {
@@ -54,6 +60,12 @@ type CreatePolicyRequest struct {
 	Domains     []string `json:"domains" binding:"required"`
 	Regexes     []string `json:"regexes"`
 	Priority    int      `json:"priority"`
+
+	// Optional schedule (I-038). Omit for an always-on policy.
+	ScheduleDays []string `json:"schedule_days"`
+	StartTime    string   `json:"start_time"`
+	EndTime      string   `json:"end_time"`
+	Timezone     string   `json:"timezone"`
 }
 
 // UpdatePolicyRequest carries an edit. Every field is a pointer so a nil value
@@ -70,28 +82,53 @@ type UpdatePolicyRequest struct {
 	Regexes     *[]string `json:"regexes"`
 	Priority    *int      `json:"priority"`
 	Enabled     *bool     `json:"enabled"`
+
+	// Optional schedule (I-038). Pointers keep PATCH semantics: nil = unchanged.
+	// Send an empty value (e.g. "" / []) to clear a field back to always-on.
+	ScheduleDays *[]string `json:"schedule_days"`
+	StartTime    *string   `json:"start_time"`
+	EndTime      *string   `json:"end_time"`
+	Timezone     *string   `json:"timezone"`
 }
 
 func policyFromModel(m models.Policy) Policy {
-	var domains, regexes []string
+	var domains, regexes, scheduleDays []string
 	if m.Domains != "" {
 		_ = json.Unmarshal([]byte(m.Domains), &domains)
 	}
 	if m.Regexes != "" {
 		_ = json.Unmarshal([]byte(m.Regexes), &regexes)
 	}
-	return Policy{
-		ID:          m.ID,
-		Name:        m.Name,
-		Description: m.Description,
-		Category:    m.Category,
-		Action:      m.Action,
-		RedirectIP:  m.RedirectIP,
-		Domains:     domains,
-		Regexes:     regexes,
-		Priority:    m.Priority,
-		Enabled:     m.Enabled,
+	if m.ScheduleDays != "" {
+		_ = json.Unmarshal([]byte(m.ScheduleDays), &scheduleDays)
 	}
+	return Policy{
+		ID:           m.ID,
+		Name:         m.Name,
+		Description:  m.Description,
+		Category:     m.Category,
+		Action:       m.Action,
+		RedirectIP:   m.RedirectIP,
+		Domains:      domains,
+		Regexes:      regexes,
+		Priority:     m.Priority,
+		Enabled:      m.Enabled,
+		ScheduleDays: scheduleDays,
+		StartTime:    m.ScheduleStart,
+		EndTime:      m.ScheduleEnd,
+		Timezone:     m.Timezone,
+	}
+}
+
+// scheduleDaysJSON encodes the day-of-week list as JSON text for storage,
+// returning "" for an empty list so the column stays clean and the policy reads
+// back as always-on (I-038).
+func scheduleDaysJSON(days []string) string {
+	if len(days) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(days)
+	return string(b)
 }
 
 // reloadPolicyEngine rebuilds the in-process policy snapshot from storage so
@@ -180,6 +217,11 @@ func (h *APIHandler) CreatePolicy(c *gin.Context) {
 		Regexes:     string(regexesJSON),
 		Priority:    req.Priority,
 		Enabled:     true,
+
+		ScheduleDays:  scheduleDaysJSON(req.ScheduleDays),
+		ScheduleStart: req.StartTime,
+		ScheduleEnd:   req.EndTime,
+		Timezone:      req.Timezone,
 	}
 
 	// Validate against the same rules the engine enforces (action enum, etc.)
@@ -253,6 +295,18 @@ func (h *APIHandler) UpdatePolicy(c *gin.Context) {
 	}
 	if req.Enabled != nil {
 		m.Enabled = *req.Enabled
+	}
+	if req.ScheduleDays != nil {
+		m.ScheduleDays = scheduleDaysJSON(*req.ScheduleDays)
+	}
+	if req.StartTime != nil {
+		m.ScheduleStart = *req.StartTime
+	}
+	if req.EndTime != nil {
+		m.ScheduleEnd = *req.EndTime
+	}
+	if req.Timezone != nil {
+		m.Timezone = *req.Timezone
 	}
 
 	// Validate the merged result before persisting.

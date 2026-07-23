@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -261,5 +262,137 @@ func TestPolicyUpdateInvalidAction(t *testing.T) {
 	}
 	if stored.Action != "BLOCK" {
 		t.Fatalf("expected action unchanged (BLOCK), got %s", stored.Action)
+	}
+}
+
+// setupPolicyTestWithClock mirrors setupPolicyTest but pins the engine to a
+// fixed instant so scheduled-policy behaviour is deterministic (I-038).
+func setupPolicyTestWithClock(t *testing.T, now time.Time) (*gin.Engine, *APIHandler) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Policy{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	h := &APIHandler{
+		Store:        *repositories.NewStore(db),
+		PolicyEngine: policy.NewPolicyEngineWithClock(func() time.Time { return now }),
+	}
+
+	r := gin.New()
+	g := r.Group("/api/v1/policies")
+	g.GET("", h.ListPolicies)
+	g.POST("", h.CreatePolicy)
+	g.GET("/:id", h.GetPolicy)
+	g.PUT("/:id", h.UpdatePolicy)
+	g.PATCH("/:id", h.UpdatePolicy)
+	g.DELETE("/:id", h.DeletePolicy)
+	return r, h
+}
+
+// TestPolicyScheduleRoundTrip verifies schedule fields persist and are returned
+// by the API unchanged.
+func TestPolicyScheduleRoundTrip(t *testing.T) {
+	r, h := setupPolicyTest(t)
+
+	create := CreatePolicyRequest{
+		ID:           "sched",
+		Name:         "Work Hours Block",
+		Action:       "BLOCK",
+		Domains:      []string{"social.example.com"},
+		Priority:     100,
+		ScheduleDays: []string{"mon", "tue", "wed", "thu", "fri"},
+		StartTime:    "09:00",
+		EndTime:      "17:00",
+		Timezone:     "Asia/Kolkata",
+	}
+	w := doReq(t, r, http.MethodPost, "/api/v1/policies", create)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// Persisted with the schedule columns populated.
+	stored, err := h.Store.Policies.GetByID("sched")
+	if err != nil {
+		t.Fatalf("expected policy persisted: %v", err)
+	}
+	if stored.ScheduleStart != "09:00" || stored.ScheduleEnd != "17:00" || stored.Timezone != "Asia/Kolkata" {
+		t.Fatalf("schedule not persisted: %+v", stored)
+	}
+
+	// GET returns the schedule fields.
+	w = doReq(t, r, http.MethodGet, "/api/v1/policies/sched", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get: expected 200, got %d", w.Code)
+	}
+	var got ResponsePolicySingle
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if got.Data.StartTime != "09:00" || got.Data.EndTime != "17:00" || got.Data.Timezone != "Asia/Kolkata" {
+		t.Fatalf("schedule not returned: %+v", got.Data)
+	}
+	if len(got.Data.ScheduleDays) != 5 {
+		t.Fatalf("expected 5 schedule days, got %+v", got.Data.ScheduleDays)
+	}
+}
+
+// TestPolicyScheduleEngineActive proves the running engine honours the schedule
+// end to end: the same policy blocks inside its window and allows outside it.
+func TestPolicyScheduleEngineActive(t *testing.T) {
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		t.Fatalf("load tz: %v", err)
+	}
+	create := CreatePolicyRequest{
+		ID:        "sched",
+		Name:      "Work Hours Block",
+		Action:    "BLOCK",
+		Domains:   []string{"social.example.com"},
+		Priority:  100,
+		StartTime: "09:00",
+		EndTime:   "17:00",
+		Timezone:  "Asia/Kolkata",
+	}
+
+	// Inside window (12:00 IST) -> engine blocks.
+	rIn, hIn := setupPolicyTestWithClock(t, time.Date(2026, 7, 20, 12, 0, 0, 0, ist))
+	if w := doReq(t, rIn, http.MethodPost, "/api/v1/policies", create); w.Code != http.StatusCreated {
+		t.Fatalf("create in-window: got %d body=%s", w.Code, w.Body.String())
+	}
+	if d, _ := hIn.PolicyEngine.Evaluate("social.example.com"); d.Action != policy.ActionDeny {
+		t.Fatalf("engine: expected Deny inside window, got %v", d.Action)
+	}
+
+	// Outside window (20:00 IST) -> engine allows.
+	rOut, hOut := setupPolicyTestWithClock(t, time.Date(2026, 7, 20, 20, 0, 0, 0, ist))
+	if w := doReq(t, rOut, http.MethodPost, "/api/v1/policies", create); w.Code != http.StatusCreated {
+		t.Fatalf("create out-window: got %d body=%s", w.Code, w.Body.String())
+	}
+	if d, _ := hOut.PolicyEngine.Evaluate("social.example.com"); d.Action != policy.ActionAllow {
+		t.Fatalf("engine: expected Allow outside window, got %v", d.Action)
+	}
+}
+
+func TestPolicyCreateInvalidSchedule(t *testing.T) {
+	r, _ := setupPolicyTest(t)
+	w := doReq(t, r, http.MethodPost, "/api/v1/policies", CreatePolicyRequest{
+		ID:        "badtz",
+		Name:      "Bad TZ",
+		Action:    "BLOCK",
+		Domains:   []string{"x.com"},
+		StartTime: "09:00",
+		EndTime:   "17:00",
+		Timezone:  "Mars/Phobos",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid timezone, got %d body=%s", w.Code, w.Body.String())
 	}
 }
