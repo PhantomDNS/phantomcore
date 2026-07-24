@@ -144,13 +144,14 @@ func GenerateKeepalivedConf(p KeepalivedParams) (string, error) {
 	return buf.String(), nil
 }
 
-// WriteKeepalivedConf renders the config and writes it to path (0644).
+// WriteKeepalivedConf renders the config and writes it to path (0600:
+// the file can carry the VRRP auth password and keepalived reads it as root).
 func WriteKeepalivedConf(p KeepalivedParams, path string) error {
 	conf, err := GenerateKeepalivedConf(p)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(conf), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(conf), 0o600); err != nil {
 		return fmt.Errorf("ha: write keepalived.conf to %s: %w", path, err)
 	}
 	return nil
