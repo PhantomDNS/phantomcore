@@ -47,7 +47,7 @@ func newTestHandler(t *testing.T) *APIHandler {
 	); err != nil {
 		t.Fatalf("migrate failed: %v", err)
 	}
-	return NewAPIHandler(*repositories.NewStore(db), nil, nil, nil)
+	return NewAPIHandler(*repositories.NewStore(db), nil, nil, nil, nil, "")
 }
 
 func newTestRouter(h *APIHandler) *gin.Engine {

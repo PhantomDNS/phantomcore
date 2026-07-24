@@ -8,6 +8,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/metrics"
 	"github.com/lopster568/phantomDNS/internal/nrd"
 	"github.com/lopster568/phantomDNS/internal/policy"
+	"github.com/lopster568/phantomDNS/internal/report"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 	"github.com/lopster568/phantomDNS/internal/threat"
@@ -90,6 +91,10 @@ func (m *mockQueryLog) GatherWindowStats(w repositories.AnalyticsWindow) (reposi
 
 func (m *mockQueryLog) AnomalyDigestBetween(current, prior repositories.AnalyticsWindow, cfg repositories.AnomalyThresholds) (repositories.AnomalyDigest, error) {
 	return repositories.AnomalyDigest{}, nil
+}
+
+func (m *mockQueryLog) Aggregate(from, to time.Time, topN int) (report.Aggregates, error) {
+	return report.Aggregates{}, nil
 }
 
 // waitSaved blocks until logQuery's goroutine persists a row (or times out).
@@ -250,10 +255,11 @@ func TestProcessDNSQuery_BlockedByPolicy(t *testing.T) {
 }
 
 func TestProcessDNSQuery_BlocklistBeforePolicy(t *testing.T) {
-	// Domain is in both blocklist and policy — blocklist should win (checked first)
+	// Domain is in both the blocklist and a BLOCK policy — blocklist is checked
+	// first and short-circuits, so the domain is blocked before policy eval.
 	bl := &mockBlocklist{blocked: map[string]bool{"both.com": true}}
 	policies := []policy.Policy{
-		{ID: "allow-both", Action: "ALLOW", Priority: 100, Domains: []string{"both.com"}},
+		{ID: "block-both", Action: "BLOCK", Priority: 100, Domains: []string{"both.com"}},
 	}
 	e := newTestEngine(bl, policies)
 
@@ -264,7 +270,97 @@ func TestProcessDNSQuery_BlocklistBeforePolicy(t *testing.T) {
 		t.Fatal("expected response")
 	}
 	if !isBlockedResponse(w.msg) {
-		t.Errorf("expected blocked (0.0.0.0) (blocklist takes precedence), got %d", w.msg.Rcode)
+		t.Errorf("expected blocked (0.0.0.0) (blocklist checked first), got %d", w.msg.Rcode)
+	}
+}
+
+func TestProcessDNSQuery_AllowPolicyOverridesBlocklist(t *testing.T) {
+	// Domain is blocklisted but an explicit ALLOW policy matches — the ALLOW must
+	// override the blocklist hit, so the query is forwarded upstream, not blocked.
+	// Use an empty (real) UpstreamManager so forwardUpstream returns SERVFAIL
+	// instead of dereferencing a nil manager — this proves we took the forward path.
+	bl := &mockBlocklist{blocked: map[string]bool{"allowme.com": true}}
+	policies := []policy.Policy{
+		{ID: "allow-allowme", Action: "ALLOW", Priority: 100, Domains: []string{"allowme.com"}},
+	}
+	e := newTestEngine(bl, policies)
+	e.setUpstreamExchanger(&UpstreamManager{}) // no pools: Exchange returns nil,nil
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("allowme.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected response")
+	}
+	if isBlockedResponse(w.msg) {
+		t.Errorf("expected NOT blocked (allow-override forwards upstream), got 0.0.0.0")
+	}
+	if w.msg.Rcode != dns.RcodeServerFailure {
+		t.Errorf("expected SERVFAIL from empty upstream (proves forward path taken), got rcode %d", w.msg.Rcode)
+	}
+}
+
+func TestProcessDNSQuery_AllowOverrideSubdomain(t *testing.T) {
+	// ALLOW policy on the parent domain should override a blocklist hit on a
+	// subdomain, matching Evaluate's parent-domain walk.
+	bl := &mockBlocklist{blocked: map[string]bool{"cdn.allowme.com": true}}
+	policies := []policy.Policy{
+		{ID: "allow-parent", Action: "ALLOW", Priority: 100, Domains: []string{"allowme.com"}},
+	}
+	e := newTestEngine(bl, policies)
+	e.setUpstreamExchanger(&UpstreamManager{})
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("cdn.allowme.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected response")
+	}
+	if isBlockedResponse(w.msg) {
+		t.Errorf("expected NOT blocked (parent ALLOW overrides), got 0.0.0.0")
+	}
+}
+
+func TestProcessDNSQuery_BlocklistedWithoutAllowStillBlocked(t *testing.T) {
+	// Domain is blocklisted and only a non-matching ALLOW policy exists — the
+	// blocklist hit must still block, proving only a matching ALLOW overrides.
+	bl := &mockBlocklist{blocked: map[string]bool{"ads.example.com": true}}
+	policies := []policy.Policy{
+		{ID: "allow-other", Action: "ALLOW", Priority: 100, Domains: []string{"unrelated.com"}},
+	}
+	e := newTestEngine(bl, policies)
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("ads.example.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected response")
+	}
+	if !isBlockedResponse(w.msg) {
+		t.Errorf("expected blocked (0.0.0.0) when no matching ALLOW policy, got %d", w.msg.Rcode)
+	}
+}
+
+func TestProcessDNSQuery_AllowOverrideClientScoped(t *testing.T) {
+	// A client-scoped ALLOW policy overrides the blocklist only for clients
+	// inside its range (I-014 scoping applies to the override path too).
+	// mockResponseWriter.RemoteAddr returns a zero-value *net.UDPAddr, whose
+	// client IP parses to unknown (nil) — a scoped policy never matches an
+	// unknown client, so the blocklist must still block here.
+	bl := &mockBlocklist{blocked: map[string]bool{"scoped.com": true}}
+	policies := []policy.Policy{
+		{ID: "allow-scoped", Action: "ALLOW", Priority: 100, Domains: []string{"scoped.com"}, ClientCIDRs: []string{"10.0.0.0/24"}},
+	}
+	e := newTestEngine(bl, policies)
+
+	w := &mockResponseWriter{}
+	e.ProcessDNSQuery(w, newTestQuery("scoped.com"))
+
+	if w.msg == nil {
+		t.Fatal("expected response")
+	}
+	if !isBlockedResponse(w.msg) {
+		t.Errorf("expected blocked (0.0.0.0): unknown client is out of the ALLOW policy's scope, got %d", w.msg.Rcode)
 	}
 }
 
