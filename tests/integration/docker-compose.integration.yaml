@@ -1,0 +1,34 @@
+# Compose override for the CI integration-test job (and local reproduction of
+# it). Adds two fixture services the Go tests under tests/integration/ need,
+# reachable from the controlplane/dataplane containers via the same
+# phantom-net network defined in the base compose.yaml:
+#
+#   - blocklist-fixture: serves a static domain list over HTTP so
+#     TestBlocklistSourceSinkholes can add a real blocklist source without
+#     depending on an external feed.
+#   - fake-resolver: a CoreDNS instance that answers every A query with a
+#     fixed, obviously-fake address, so TestResolverLiveApply can prove the
+#     dataplane actually forwarded a query to a resolver set via the
+#     control-plane API (not just that the API call returned success).
+#
+# Usage (from repo root):
+#   docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml up -d --build
+#   go test -tags=integration ./tests/integration/...
+#   docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml down -v
+services:
+  blocklist-fixture:
+    image: nginx:alpine
+    container_name: hydra-blocklist-fixture
+    networks:
+      - phantom-net
+    volumes:
+      - ./tests/integration/fixtures:/usr/share/nginx/html:ro
+
+  fake-resolver:
+    image: coredns/coredns:latest
+    container_name: hydra-fake-resolver
+    networks:
+      - phantom-net
+    volumes:
+      - ./tests/integration/fixtures/Corefile:/Corefile:ro
+    command: ["-conf", "/Corefile"]
