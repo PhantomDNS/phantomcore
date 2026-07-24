@@ -63,6 +63,15 @@ dataplane:
 
 controlplane:
   listen_addr: "0.0.0.0:8080"
+  # Address of the dataplane's gRPC server (resolver live-apply, DNS engine
+  # on/off toggle, live metrics). This is the control plane's DIAL address,
+  # not the dataplane's bind address above (dataplane.grpc_server.listen_addr)
+  # — they are the same value on bare metal but must differ whenever the two
+  # planes run in separate containers/hosts, since "localhost" inside the
+  # control plane is the control plane, not the dataplane. In docker compose,
+  # set this to the dataplane service's address (e.g. "dataplane:50051").
+  # Env override: DATAPLANE_GRPC_ADDR.
+  dataplane_grpc_addr: "localhost:50051"
   # Optional HTTPS for the control-plane API. HTTP is the default (TLS off).
   # Public ACME cannot issue for private-LAN names, so use either an
   # operator-provided cert/key pair, or an auto-generated self-signed cert.

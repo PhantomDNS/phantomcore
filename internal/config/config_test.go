@@ -84,6 +84,68 @@ func TestTLSConfigMode(t *testing.T) {
 	}
 }
 
+func TestApplyDataPlaneGRPCAddrEnv(t *testing.T) {
+	t.Run("empty config and empty env falls back to default", func(t *testing.T) {
+		t.Setenv("DATAPLANE_GRPC_ADDR", "")
+
+		cfg := ControlPlaneConfig{}
+		applyDataPlaneGRPCAddrEnv(&cfg)
+
+		if cfg.DataPlaneGRPCAddr != DefaultDataPlaneGRPCAddr {
+			t.Fatalf("DataPlaneGRPCAddr = %q, want default %q", cfg.DataPlaneGRPCAddr, DefaultDataPlaneGRPCAddr)
+		}
+	})
+
+	t.Run("config file value is kept when env is unset", func(t *testing.T) {
+		t.Setenv("DATAPLANE_GRPC_ADDR", "")
+
+		cfg := ControlPlaneConfig{DataPlaneGRPCAddr: "localhost:50051"}
+		applyDataPlaneGRPCAddrEnv(&cfg)
+
+		if cfg.DataPlaneGRPCAddr != "localhost:50051" {
+			t.Fatalf("DataPlaneGRPCAddr = %q, want %q", cfg.DataPlaneGRPCAddr, "localhost:50051")
+		}
+	})
+
+	t.Run("env overrides config file value (docker compose topology)", func(t *testing.T) {
+		t.Setenv("DATAPLANE_GRPC_ADDR", "dataplane:50051")
+
+		cfg := ControlPlaneConfig{DataPlaneGRPCAddr: "localhost:50051"}
+		applyDataPlaneGRPCAddrEnv(&cfg)
+
+		if cfg.DataPlaneGRPCAddr != "dataplane:50051" {
+			t.Fatalf("DataPlaneGRPCAddr = %q, want %q (env override)", cfg.DataPlaneGRPCAddr, "dataplane:50051")
+		}
+	})
+
+	t.Run("env overrides even an empty config file value", func(t *testing.T) {
+		t.Setenv("DATAPLANE_GRPC_ADDR", "dataplane:50051")
+
+		cfg := ControlPlaneConfig{}
+		applyDataPlaneGRPCAddrEnv(&cfg)
+
+		if cfg.DataPlaneGRPCAddr != "dataplane:50051" {
+			t.Fatalf("DataPlaneGRPCAddr = %q, want %q (env override)", cfg.DataPlaneGRPCAddr, "dataplane:50051")
+		}
+	})
+}
+
+func TestDefaultConfigDataPlaneGRPCAddr(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.ControlPlane.DataPlaneGRPCAddr != DefaultDataPlaneGRPCAddr {
+		t.Fatalf("defaultConfig().ControlPlane.DataPlaneGRPCAddr = %q, want %q",
+			cfg.ControlPlane.DataPlaneGRPCAddr, DefaultDataPlaneGRPCAddr)
+	}
+	// The dataplane's own bind address (used for its GRPCServer.Port listen,
+	// see internal/grpc/dataplane.New) and the control-plane's dial address
+	// must be independently configurable, even though they share the same
+	// bare-metal default value.
+	if cfg.DataPlane.GRPCServer.ListenAddr != cfg.ControlPlane.DataPlaneGRPCAddr {
+		t.Fatalf("bare-metal defaults should coincide: dataplane bind %q, controlplane dial %q",
+			cfg.DataPlane.GRPCServer.ListenAddr, cfg.ControlPlane.DataPlaneGRPCAddr)
+	}
+}
+
 func TestApplyTLSEnv(t *testing.T) {
 	t.Run("empty env fills default self-signed dir", func(t *testing.T) {
 		t.Setenv("TLS_CERT_FILE", "")

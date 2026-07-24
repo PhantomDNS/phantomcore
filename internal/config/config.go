@@ -151,9 +151,29 @@ func (c DataPlaneConfig) WatchdogIntervalDuration() time.Duration {
 }
 
 type ControlPlaneConfig struct {
-	ListenAddr string    `yaml:"listen_addr"`
-	TLS        TLSConfig `yaml:"tls"`
+	ListenAddr string `yaml:"listen_addr"`
+
+	// DataPlaneGRPCAddr is the address the control plane DIALS to reach the
+	// dataplane's gRPC server (resolver live-apply, engine on/off toggle,
+	// metrics bridging). This is intentionally a separate key from
+	// DataPlane.GRPCServer.ListenAddr, which is the dataplane's own BIND
+	// address: in a single-process/bare-metal deployment both happen to be
+	// "localhost:50051", but in docker compose (or any topology where the
+	// two planes are different hosts/containers) "localhost" from inside the
+	// control plane is the control plane itself, not the dataplane, and
+	// reusing the dataplane's bind address as the dial target fails with
+	// connection refused. Default: "localhost:50051" (bare-metal, unchanged
+	// behavior). Env override: DATAPLANE_GRPC_ADDR.
+	DataPlaneGRPCAddr string `yaml:"dataplane_grpc_addr"`
+
+	TLS TLSConfig `yaml:"tls"`
 }
+
+// DefaultDataPlaneGRPCAddr is the control plane's dataplane-dial address used
+// when neither the config file nor DATAPLANE_GRPC_ADDR set one. It matches
+// the dataplane's own default bind port (50051) on localhost, which is
+// correct for bare-metal/same-host deployments.
+const DefaultDataPlaneGRPCAddr = "localhost:50051"
 
 // TLSConfig controls how the control-plane HTTP API is served.
 //
@@ -242,7 +262,8 @@ func defaultConfig() *Config {
 			},
 		},
 		ControlPlane: ControlPlaneConfig{
-			ListenAddr: "0.0.0.0:8080",
+			ListenAddr:        "0.0.0.0:8080",
+			DataPlaneGRPCAddr: DefaultDataPlaneGRPCAddr,
 			TLS: TLSConfig{
 				SelfSignedDir: DefaultSelfSignedDir,
 			},
@@ -331,6 +352,7 @@ var DefaultConfig = func() *Config {
 		cfg.DataPlane.MetricsAddr = "0.0.0.0:9153"
 	}
 	applyTLSEnv(&cfg.ControlPlane.TLS)
+	applyDataPlaneGRPCAddrEnv(&cfg.ControlPlane)
 	if v := os.Getenv("WATCHDOG_INTERVAL"); v != "" {
 		cfg.DataPlane.WatchdogInterval = v
 	}
@@ -449,6 +471,19 @@ func applyTLSEnv(t *TLSConfig) {
 	}
 	if t.SelfSignedDir == "" {
 		t.SelfSignedDir = DefaultSelfSignedDir
+	}
+}
+
+// applyDataPlaneGRPCAddrEnv overlays DATAPLANE_GRPC_ADDR onto the
+// control-plane's dataplane-dial address, then fills in
+// DefaultDataPlaneGRPCAddr when both the config file and the environment
+// leave it unset (e.g. an older config.yaml predating this key).
+func applyDataPlaneGRPCAddrEnv(cfg *ControlPlaneConfig) {
+	if v := os.Getenv("DATAPLANE_GRPC_ADDR"); v != "" {
+		cfg.DataPlaneGRPCAddr = v
+	}
+	if cfg.DataPlaneGRPCAddr == "" {
+		cfg.DataPlaneGRPCAddr = DefaultDataPlaneGRPCAddr
 	}
 }
 

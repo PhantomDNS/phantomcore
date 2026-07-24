@@ -125,6 +125,80 @@ jobs:
         docker compose -f compose.yaml config
         echo "✅ Docker Compose configuration is valid"
 
+  # Integration Tests
+  integration:
+    name: 🔄 Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v7
+
+    - name: 🔧 Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: 🐳 Build and start the compose stack
+      run: |
+        docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml up -d --build
+
+    - name: ⏳ Wait for services to become healthy
+      run: |
+        COMPOSE="docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml"
+
+        dump_diagnostics() {
+          echo "::group::Container status"
+          $COMPOSE ps -a
+          echo "::endgroup::"
+          echo "::group::Last 50 log lines per container"
+          $COMPOSE logs --tail=50
+          echo "::endgroup::"
+          echo "::group::Full logs"
+          $COMPOSE logs
+          echo "::endgroup::"
+        }
+
+        echo "Waiting for control-plane /health..."
+        for i in $(seq 1 30); do
+          if curl -sf http://127.0.0.1:8086/health > /dev/null; then
+            echo "control-plane is up"
+            break
+          fi
+          if [ "$i" -eq 30 ]; then
+            echo "control-plane did not become healthy in time"
+            dump_diagnostics
+            exit 1
+          fi
+          sleep 2
+        done
+
+        echo "Waiting for dataplane /metrics..."
+        for i in $(seq 1 30); do
+          if curl -sf http://127.0.0.1:9153/metrics > /dev/null; then
+            echo "dataplane metrics are up"
+            break
+          fi
+          if [ "$i" -eq 30 ]; then
+            echo "dataplane metrics did not become available in time"
+            dump_diagnostics
+            exit 1
+          fi
+          sleep 2
+        done
+
+    - name: 🧪 Run integration tests
+      run: go test -tags=integration -v ./tests/integration/...
+
+    - name: 🪵 Dump compose logs on failure
+      if: failure()
+      run: docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml logs
+
+    - name: 🧹 Tear down the compose stack
+      if: always()
+      run: docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml down -v
+
   # Dependency Check
   deps:
     name: 📦 Dependency Check

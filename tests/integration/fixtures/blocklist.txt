@@ -1,0 +1,4 @@
+# Fixture domain list for the integration test suite's blocklist-source test
+# (TestBlocklistSourceSinkholes in blocklist_test.go). Served over HTTP by the
+# blocklist-fixture service in docker-compose.integration.yaml.
+hydra-integration-blocklist.test
