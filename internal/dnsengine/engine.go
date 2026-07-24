@@ -632,6 +632,22 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		if err != nil {
 			logger.Log.Error("Blocklist check failed: " + err.Error())
 		} else if blocked {
+			// An explicit ALLOW policy overrides a blocklist hit: it gives an
+			// admin an escape hatch when a broad blocklist (e.g. a category
+			// feed) catches a domain the org actually needs, without having to
+			// edit the blocklist source. This bypasses only the blocklist —
+			// it does not change how ALLOW vs BLOCK priority is resolved
+			// inside policy.Engine.Evaluate (Step 2 below), and it does not
+			// re-run the downstream detectors (threat score, abused-TLD,
+			// safesearch, NOD, fast-flux/GeoIP) that the normal allow path
+			// applies; see the precedence order documented on PR #35.
+			if e.policyEngine != nil && e.policyEngine.IsExplicitlyAllowed(domainName, clientIP) {
+				logger.Log.Infof("Allow-override for blocklisted domain: %s (reason=allow-override)", domainName)
+				e.logQuery(domainName, clientIP, "allow", "allow-override", threatResult)
+				e.forwardUpstream(w, r, domainName)
+				success = true
+				return
+			}
 			logger.Log.Infof("Blocked by blocklist: %s", domainName)
 			e.logQuery(domainName, clientIP, "block", "blocklist", threatResult)
 			e.metrics.RecordBlocked()

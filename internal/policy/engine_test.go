@@ -212,6 +212,67 @@ func TestPolicyDecision_Nil(t *testing.T) {
 	}
 }
 
+func TestIsExplicitlyAllowed(t *testing.T) {
+	e := NewPolicyEngine()
+	if err := e.LoadPolicies([]Policy{
+		{ID: "allow-good", Action: "ALLOW", Priority: 100, Domains: []string{"good.com"}},
+		{ID: "block-bad", Action: "BLOCK", Priority: 100, Domains: []string{"bad.com"}},
+		{ID: "allow-parent", Action: "ALLOW", Priority: 100, Domains: []string{"allow.example.com"}},
+		// Same domain matched by both ALLOW and a higher-priority BLOCK.
+		{ID: "mix-allow", Action: "ALLOW", Priority: 10, Domains: []string{"mixed.com"}},
+		{ID: "mix-block", Action: "BLOCK", Priority: 200, Domains: []string{"mixed.com"}},
+		// Wildcard ALLOW, to exercise the dynamic-match path (I-066 extends
+		// the original exact-match-only check to also cover wildcard/regex).
+		{ID: "allow-wild", Action: "ALLOW", Priority: 100, Domains: []string{"*.cdn-allow.com"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		domain string
+		want   bool
+	}{
+		{"good.com", true},              // explicit ALLOW
+		{"GOOD.COM.", true},             // normalized (case + trailing dot)
+		{"bad.com", false},              // BLOCK policy is not an allow
+		{"sub.allow.example.com", true}, // parent-domain walk
+		{"mixed.com", true},             // matching ALLOW exists despite higher-priority BLOCK
+		{"unknown.com", false},          // default-allow is NOT explicit allow
+		{"com", false},                  // TLD alone never matches
+		{"static.cdn-allow.com", true},  // wildcard ALLOW match
+	}
+	for _, tt := range tests {
+		if got := e.IsExplicitlyAllowed(tt.domain, ""); got != tt.want {
+			t.Errorf("IsExplicitlyAllowed(%q) = %v, want %v", tt.domain, got, tt.want)
+		}
+	}
+}
+
+func TestIsExplicitlyAllowed_EmptyPolicies(t *testing.T) {
+	e := NewPolicyEngine()
+	if e.IsExplicitlyAllowed("anything.com", "") {
+		t.Errorf("expected false with no policies loaded")
+	}
+}
+
+func TestIsExplicitlyAllowed_ClientScoped(t *testing.T) {
+	// A client-scoped ALLOW only overrides for clients inside its range;
+	// mirrors Evaluate's per-client scoping (I-014).
+	e := NewPolicyEngine()
+	if err := e.LoadPolicies([]Policy{
+		{ID: "allow-lan", Action: "ALLOW", Priority: 100, Domains: []string{"scoped.com"}, ClientCIDRs: []string{"10.0.0.0/24"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !e.IsExplicitlyAllowed("scoped.com", "10.0.0.5") {
+		t.Errorf("expected explicit allow for in-scope client")
+	}
+	if e.IsExplicitlyAllowed("scoped.com", "192.168.1.5") {
+		t.Errorf("expected NOT explicit allow for out-of-scope client")
+	}
+}
+
 func TestEvaluate_BlockByRegex(t *testing.T) {
 	e := NewPolicyEngine()
 	if err := e.LoadPolicies([]Policy{
