@@ -146,6 +146,18 @@ func TestDefaultConfigDataPlaneGRPCAddr(t *testing.T) {
 	}
 }
 
+// TestDefaultConfigMetricsAddr verifies the Prometheus /metrics listener
+// defaults to loopback-only (127.0.0.1:9153), not 0.0.0.0. Operators opt into
+// wider exposure explicitly via config.yaml or the METRICS_LISTEN_ADDR env var.
+func TestDefaultConfigMetricsAddr(t *testing.T) {
+	const wantDefault = "127.0.0.1:9153"
+
+	cfg := defaultConfig()
+	if cfg.DataPlane.MetricsAddr != wantDefault {
+		t.Fatalf("defaultConfig().DataPlane.MetricsAddr = %q, want %q", cfg.DataPlane.MetricsAddr, wantDefault)
+	}
+}
+
 func TestApplyTLSEnv(t *testing.T) {
 	t.Run("empty env fills default self-signed dir", func(t *testing.T) {
 		t.Setenv("TLS_CERT_FILE", "")

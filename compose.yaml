@@ -15,6 +15,11 @@ services:
       - phantom-net
     environment:
       - CONTROLPLANE_ADDR=phantom-controlplane:50051
+      # The dataplane's default (127.0.0.1:9153) is loopback-only, which the
+      # "9153:9153" port mapping above cannot reach: Docker's published ports
+      # forward to the container's network interface, not its loopback. Bind
+      # 0.0.0.0 explicitly here so the mapping to the host works as intended.
+      - METRICS_LISTEN_ADDR=0.0.0.0:9153
     volumes:
       - ./data:/app/data
       - ./configs/config.yaml:/app/configs/config.yaml
