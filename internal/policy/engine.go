@@ -168,6 +168,68 @@ func pickHighestPriorityScoped(snap *PolicySnapshot, candidates []*Policy, clien
 	return best
 }
 
+// IsExplicitlyAllowed reports whether the domain is matched by a real policy
+// whose action is ALLOW, applying the same schedule (I-038) and per-client
+// scope (I-014) filters as Evaluate. Unlike Evaluate — which stops at the
+// first domain level that has an active, in-scope decision and returns
+// whatever the highest-priority policy there says — IsExplicitlyAllowed
+// keeps walking the full match surface (exact-match parent domains, then
+// wildcard/regex rules) and returns true as soon as ANY active, in-scope
+// ALLOW policy matches anywhere in it, even when a higher-priority BLOCK
+// policy also matches at the same level. It exists so callers can
+// distinguish "allowed because an admin explicitly allowlisted it" from
+// Evaluate's default ActionAllow (no policy matched at all) — e.g. to let an
+// explicit ALLOW override a blocklist hit without changing how ALLOW vs
+// BLOCK priority is resolved within Evaluate itself.
+func (e *Engine) IsExplicitlyAllowed(domain string, clientIP string) bool {
+	d := normalizeDomain(domain)
+	snap := e.snapshot.Load().(*PolicySnapshot)
+	client := parseClientIP(clientIP)
+	now := e.now()
+
+	parts := strings.Split(d, ".")
+	for i := 0; i < len(parts)-1; i++ {
+		candidate := strings.Join(parts[i:], ".")
+		if snap.Bloom != nil && !snap.Bloom.TestString(candidate) {
+			continue
+		}
+		pols, ok := snap.Exact[candidate]
+		if !ok {
+			continue
+		}
+		if hasScopedAllow(snap, filterActive(pols, now), client) {
+			return true
+		}
+	}
+
+	var dynamic []*Policy
+	for _, w := range snap.Wildcards {
+		if d == w.base || strings.HasSuffix(d, "."+w.base) {
+			dynamic = append(dynamic, w.policy)
+		}
+	}
+	for _, r := range snap.Regexes {
+		if r.re.MatchString(d) {
+			dynamic = append(dynamic, r.policy)
+		}
+	}
+	return hasScopedAllow(snap, filterActive(dynamic, now), client)
+}
+
+// hasScopedAllow reports whether any policy in pols that is in scope for
+// client has action ALLOW. Callers pass already schedule-filtered policies.
+func hasScopedAllow(snap *PolicySnapshot, pols []*Policy, client net.IP) bool {
+	for _, p := range pols {
+		if !snap.matchesClient(p, client) {
+			continue
+		}
+		if strings.ToUpper(p.Action) == "ALLOW" {
+			return true
+		}
+	}
+	return false
+}
+
 func policyDecision(p *Policy) Decision {
 	if p == nil {
 		return Decision{Action: ActionAllow}
