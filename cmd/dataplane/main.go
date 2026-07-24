@@ -16,6 +16,7 @@ import (
 	"github.com/lopster568/phantomDNS/internal/dnsengine"
 	"github.com/lopster568/phantomDNS/internal/geoip"
 	dataplanegrpc "github.com/lopster568/phantomDNS/internal/grpc/dataplane"
+	"github.com/lopster568/phantomDNS/internal/ha"
 	"github.com/lopster568/phantomDNS/internal/heartbeat"
 	"github.com/lopster568/phantomDNS/internal/inventory"
 	"github.com/lopster568/phantomDNS/internal/logger"
@@ -205,6 +206,20 @@ func main() {
 		go nrdChecker.Run(context.Background())
 	}
 	engine.AttachNRDChecker(nrdChecker)
+
+	// 6e. High-Availability heartbeat (active-passive VRRP-style, default OFF).
+	// When HA_ENABLED=true this tracks peer liveness and derives whether this
+	// node should hold the VIP. Failover of the VIP itself is done by keepalived
+	// (see internal/ha). This is NOT shared-state clustering.
+	if haCfg := ha.ConfigFromEnv(); haCfg.Enabled {
+		haMgr, err := ha.New(haCfg)
+		if err != nil {
+			logger.Log.Errorf("HA enabled but config invalid, running standalone: %v", err)
+		} else {
+			logger.Log.Infof("HA active-passive enabled: role=%s peer=%s vip=%s", haCfg.Role, haCfg.PeerAddr, haCfg.VIP)
+			go haMgr.Run(context.Background())
+		}
+	}
 
 	// 7. Attach blocklist checker and start DNS server
 	engine.AttachBlocklistChecker(repos.Blocklist)
