@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lopster568/phantomDNS/internal/metrics"
+	"github.com/lopster568/phantomDNS/internal/report"
 	"github.com/lopster568/phantomDNS/internal/storage/models"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
 )
@@ -78,6 +79,10 @@ func (r *recordingQueryLog) GatherWindowStats(w repositories.AnalyticsWindow) (r
 
 func (r *recordingQueryLog) AnomalyDigestBetween(current, prior repositories.AnalyticsWindow, cfg repositories.AnomalyThresholds) (repositories.AnomalyDigest, error) {
 	return repositories.AnomalyDigest{}, nil
+}
+
+func (r *recordingQueryLog) Aggregate(from, to time.Time, topN int) (report.Aggregates, error) {
+	return report.Aggregates{}, nil
 }
 
 // recordingStats counts IncrementCounter calls per action.
