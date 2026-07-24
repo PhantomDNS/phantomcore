@@ -38,6 +38,13 @@ dataplane:
   dns_0x20: false
   # Address for the Prometheus /metrics endpoint (defaults to 0.0.0.0:9153).
   metrics_addr: "0.0.0.0:9153"
+  # Bounded async query-log writer: buffer capacity and worker count. Once the
+  # buffer is full, new rows are dropped and counted (see the
+  # hydradns_dns_querylog_dropped_total metric) rather than blocking DNS
+  # resolution. <= 0 (default) uses the package defaults: 1024 / 2.
+  # Env overrides: QUERY_LOG_BUFFER_SIZE, QUERY_LOG_WORKERS.
+  query_log_buffer_size: 1024
+  query_log_workers: 2
   # Self-heal watchdog: probe cadence and consecutive-failure threshold before
   # recovery. Set watchdog_interval to "off" or "0" to disable. Overridable via
   # WATCHDOG_INTERVAL / WATCHDOG_FAILURE_THRESHOLD env vars.
