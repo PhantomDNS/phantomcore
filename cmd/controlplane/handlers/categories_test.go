@@ -38,7 +38,7 @@ func newCatalogTestHandler(t *testing.T) *APIHandler {
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	return NewAPIHandler(*repositories.NewStore(db), nil, nil, nil)
+	return NewAPIHandler(*repositories.NewStore(db), nil, nil, nil, nil, "")
 }
 
 func newCatalogRouter(h *APIHandler) *gin.Engine {

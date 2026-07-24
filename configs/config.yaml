@@ -43,6 +43,14 @@ dataplane:
   # since the container needs to bind 0.0.0.0 for the published port mapping
   # to reach it. Env override: METRICS_LISTEN_ADDR.
   metrics_addr: "127.0.0.1:9153"
+  # Address for the Prometheus /metrics endpoint (defaults to 0.0.0.0:9153).
+  # Bounded async query-log writer: buffer capacity and worker count. Once the
+  # buffer is full, new rows are dropped and counted (see the
+  # hydradns_dns_querylog_dropped_total metric) rather than blocking DNS
+  # resolution. <= 0 (default) uses the package defaults: 1024 / 2.
+  # Env overrides: QUERY_LOG_BUFFER_SIZE, QUERY_LOG_WORKERS.
+  query_log_buffer_size: 1024
+  query_log_workers: 2
   # Self-heal watchdog: probe cadence and consecutive-failure threshold before
   # recovery. Set watchdog_interval to "off" or "0" to disable. Overridable via
   # WATCHDOG_INTERVAL / WATCHDOG_FAILURE_THRESHOLD env vars.
@@ -87,3 +95,11 @@ controlplane:
   #   # Or auto-generate a self-signed cert on first boot:
   #   auto_self_signed: false                 # env: TLS_AUTO_SELF_SIGNED
   #   self_signed_dir: "/app/data/tls"        # env: TLS_SELF_SIGNED_DIR
+
+# Managed-service licensing (SOFT gate — premium/managed features + support only).
+# Core DNS resolution/filtering ALWAYS works regardless of license state; a
+# missing or expired license simply runs the install in "community" mode.
+# Provide a signed license token via one of these environment variables:
+#   LICENSE_KEY  - the raw signed license token (takes precedence)
+#   LICENSE_FILE - path to a file containing the token
+# See internal/license for the token format and validation details.

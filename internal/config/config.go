@@ -122,6 +122,16 @@ type DataPlaneConfig struct {
 	NRDFeedURL         string `yaml:"nrd_feed_url"`
 	NRDBlock           bool   `yaml:"nrd_block"`
 	NRDRefreshInterval string `yaml:"nrd_refresh_interval"`
+
+	// QueryLogBufferSize is the capacity of the bounded async query-log queue.
+	// <= 0 (the default) uses the package default (1024). Once the buffer is
+	// full, new rows are dropped and counted rather than blocking the query
+	// path. Env override: QUERY_LOG_BUFFER_SIZE.
+	QueryLogBufferSize int `yaml:"query_log_buffer_size"`
+	// QueryLogWorkers is the number of fixed workers draining the query-log
+	// queue. <= 0 (the default) uses the package default (2). Env override:
+	// QUERY_LOG_WORKERS.
+	QueryLogWorkers int `yaml:"query_log_workers"`
 }
 
 // GeoIPConfig configures optional ASN/GeoIP answer filtering. It is disabled
@@ -434,6 +444,20 @@ var DefaultConfig = func() *Config {
 	}
 	if interval := os.Getenv("NRD_REFRESH_INTERVAL"); interval != "" {
 		cfg.DataPlane.NRDRefreshInterval = interval
+	}
+	if v := os.Getenv("QUERY_LOG_BUFFER_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.DataPlane.QueryLogBufferSize = n
+		} else {
+			logger.Log.Warnf("Invalid QUERY_LOG_BUFFER_SIZE=%q, ignoring: %v", v, err)
+		}
+	}
+	if v := os.Getenv("QUERY_LOG_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.DataPlane.QueryLogWorkers = n
+		} else {
+			logger.Log.Warnf("Invalid QUERY_LOG_WORKERS=%q, ignoring: %v", v, err)
+		}
 	}
 	return cfg
 }()

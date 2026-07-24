@@ -128,6 +128,37 @@ go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
 
+## 🔁 High Availability (active-passive, experimental)
+
+HydraDNS ships a first-cut **active-passive** HA foundation in
+[`internal/ha`](./internal/ha). It is **OFF by default**.
+
+> This is **VRRP-style virtual-IP failover, not shared-state clustering.**
+> There is no shared database, state replication, or consensus. Exactly one
+> node is active (holds the VIP) at a time; the other is a warm standby.
+
+Two pieces:
+
+1. **Peer heartbeat / state machine** — each box is assigned a static role
+   (`primary` or `backup`), periodically probes its peer, and derives an
+   authoritative "am I active / should I take over" signal. The primary stays
+   active whenever it is running; the backup promotes itself only when the
+   primary is detected down (with hysteresis) and demotes on recovery.
+
+   Enable on the data plane via environment variables:
+
+   ```sh
+   HA_ENABLED=true
+   HA_ROLE=primary        # or "backup"
+   HA_PEER_ADDR=10.0.0.2:9000
+   HA_VIP=192.168.1.100   # informational; used by the keepalived generator
+   ```
+
+2. **keepalived config generator** — `ha.GenerateKeepalivedConf` /
+   `ha.WriteKeepalivedConf` produce a valid `keepalived.conf` (VRRP) for the
+   operator given role, VIP, and interface, so failover of the virtual IP can
+   be set up at the network layer.
+
 ## 🤝 Contributing
 
 We welcome contributions! Check out our [Contributing Guidelines](./CONTRIBUTING.md) to get started.

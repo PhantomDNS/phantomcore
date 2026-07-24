@@ -3,6 +3,7 @@ package routes
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/lopster568/phantomDNS/cmd/controlplane/handlers"
+	"github.com/lopster568/phantomDNS/internal/fleet"
 )
 
 func RegisterRoutes(r *gin.Engine, apiHandler *handlers.APIHandler) {
@@ -96,6 +97,23 @@ func RegisterRoutes(r *gin.Engine, apiHandler *handlers.APIHandler) {
 		{
 			cfg.GET("/export", apiHandler.ExportConfig)
 			cfg.POST("/import", apiHandler.ImportConfig)
+		}
+
+		// Reporting endpoint — plain-language period report (text/html/json)
+		api.GET("/reports", apiHandler.GetReport)
+
+		// Fleet endpoints (opt-in — only registered when the aggregator is on).
+		// POST /fleet/heartbeat authenticates with the dedicated fleet token
+		// (exempt from the global admin auth); GET /fleet is admin-only and
+		// stays gated by the global auth middleware.
+		if apiHandler.Fleet != nil {
+			fleetGroup := api.Group("/fleet")
+			{
+				fleetGroup.POST("/heartbeat",
+					fleet.RequireHeartbeatToken(apiHandler.FleetHeartbeatToken),
+					apiHandler.PostFleetHeartbeat)
+				fleetGroup.GET("", apiHandler.GetFleet)
+			}
 		}
 	}
 }

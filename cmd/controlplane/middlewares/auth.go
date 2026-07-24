@@ -8,13 +8,17 @@ import (
 )
 
 func Auth(authRepo repositories.AuthRepository) gin.HandlerFunc {
-	// Paths that don't require authentication
+	// Paths that don't require admin authentication. The fleet heartbeat is
+	// exempt because it is authenticated separately with a dedicated box token
+	// (see internal/fleet.RequireHeartbeatToken) and never accepts the admin
+	// API key. It is only reachable when the opt-in fleet feature registers it.
 	exemptPaths := map[string]bool{
-		"/health":             true,
-		"/":                   true,
-		"/api/v1/auth/status": true,
-		"/api/v1/auth/login":  true,
-		"/api/v1/auth/setup":  true,
+		"/health":                 true,
+		"/":                       true,
+		"/api/v1/auth/status":     true,
+		"/api/v1/auth/login":      true,
+		"/api/v1/auth/setup":      true,
+		"/api/v1/fleet/heartbeat": true,
 	}
 
 	return func(c *gin.Context) {

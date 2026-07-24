@@ -9,8 +9,10 @@ import (
 	"github.com/lopster568/phantomDNS/cmd/controlplane/middlewares"
 	"github.com/lopster568/phantomDNS/cmd/controlplane/routes"
 	"github.com/lopster568/phantomDNS/internal/config"
+	"github.com/lopster568/phantomDNS/internal/fleet"
 	client "github.com/lopster568/phantomDNS/internal/grpc/controlplane"
 	"github.com/lopster568/phantomDNS/internal/inventory"
+	"github.com/lopster568/phantomDNS/internal/license"
 	"github.com/lopster568/phantomDNS/internal/policy"
 	"github.com/lopster568/phantomDNS/internal/storage/db"
 	"github.com/lopster568/phantomDNS/internal/storage/repositories"
@@ -29,6 +31,13 @@ func main() {
 	}
 	db.InitDB(dbPath)
 	repos := repositories.NewStore(db.DB)
+
+	// Soft license validation for managed-service tiers. This is a SOFT
+	// gate: it only governs premium/managed features and support. Core DNS
+	// resolution/filtering (in the data plane) is never affected — a
+	// missing or expired license simply runs the install in community mode.
+	ls := license.InitFromEnv().Status()
+	log.Printf("license: mode=%s tier=%s valid=%t", ls.Mode, ls.Tier, ls.Valid)
 
 	// Initialize grpc client. This dials the dataplane's gRPC server, which is
 	// a different address than the dataplane's own bind address
@@ -86,8 +95,23 @@ func main() {
 		_ = policyEngine.LoadPolicies(engPolicies)
 	}
 
+	// Optional MSP fleet aggregator (opt-in, OFF by default). Only wired up
+	// when explicitly enabled with a heartbeat token; otherwise the routes are
+	// never registered.
+	var fleetStore *fleet.Store
+	fleetCfg := fleet.LoadConfig()
+	if fleetCfg.Enabled {
+		if fleetCfg.HeartbeatToken == "" {
+			log.Println("fleet aggregator enabled but FLEET_HEARTBEAT_TOKEN is empty — feature disabled")
+			fleetCfg.Enabled = false
+		} else {
+			fleetStore = fleet.NewStore(fleetCfg.StaleAfter, nil)
+			log.Printf("fleet aggregator enabled (stale after %s)", fleetCfg.StaleAfter)
+		}
+	}
+
 	// Initialize Gin router
-	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory, policyEngine)
+	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory, policyEngine, fleetStore, fleetCfg.HeartbeatToken)
 	r := gin.Default()
 	r.Use(middlewares.Logger())
 

@@ -67,8 +67,14 @@ type Engine struct {
 	metrics         *metrics.QueryMetrics
 	queryLog        repositories.QueryLogRepository
 	statistics      repositories.StatisticsRepository
-	threatDetector  *threat.Detector
-	exporter        *Exporter
+	// qlWriter is the bounded async writer logQuery submits persistence work
+	// to. Built alongside queryLog in NewDNSEngine; tests that set queryLog
+	// directly must also set qlWriter (see newQueryLogWriter). Submit/Close
+	// are nil-receiver-safe, but a non-nil queryLog with a nil qlWriter would
+	// silently drop every row, so treat the two as always paired.
+	qlWriter       *queryLogWriter
+	threatDetector *threat.Detector
+	exporter       *Exporter
 	// geo is nil when ASN/GeoIP answer filtering is disabled (the default, no
 	// database configured). When set, resolved answer IPs on the allow path are
 	// evaluated against it.
@@ -229,6 +235,7 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		metrics:              qm,
 		queryLog:             repos.QueryLogs,
 		statistics:           repos.Statistics,
+		qlWriter:             newQueryLogWriter(repos.QueryLogs, repos.Statistics, qm, cfg.QueryLogBufferSize, cfg.QueryLogWorkers),
 		threatDetector:       detector,
 		exporter:             exporter,
 		threatBlockThreshold: cfg.ThreatBlockThreshold,
@@ -315,6 +322,9 @@ func (e *Engine) Shutdown() {
 		(*p).Close()
 	}
 	e.exporter.Close() // nil-safe
+	// Drain the query log writer last: it waits for queued rows already
+	// submitted by in-flight logQuery calls to finish persisting.
+	e.qlWriter.Close() // nil-safe
 }
 
 func (e *Engine) respondBlocked(w dns.ResponseWriter, r *dns.Msg, domain, reason string) {
@@ -632,6 +642,22 @@ func (e *Engine) ProcessDNSQuery(w dns.ResponseWriter, r *dns.Msg) {
 		if err != nil {
 			logger.Log.Error("Blocklist check failed: " + err.Error())
 		} else if blocked {
+			// An explicit ALLOW policy overrides a blocklist hit: it gives an
+			// admin an escape hatch when a broad blocklist (e.g. a category
+			// feed) catches a domain the org actually needs, without having to
+			// edit the blocklist source. This bypasses only the blocklist —
+			// it does not change how ALLOW vs BLOCK priority is resolved
+			// inside policy.Engine.Evaluate (Step 2 below), and it does not
+			// re-run the downstream detectors (threat score, abused-TLD,
+			// safesearch, NOD, fast-flux/GeoIP) that the normal allow path
+			// applies; see the precedence order documented on PR #35.
+			if e.policyEngine != nil && e.policyEngine.IsExplicitlyAllowed(domainName, clientIP) {
+				logger.Log.Infof("Allow-override for blocklisted domain: %s (reason=allow-override)", domainName)
+				e.logQuery(domainName, clientIP, "allow", "allow-override", threatResult)
+				e.forwardUpstream(w, r, domainName)
+				success = true
+				return
+			}
 			logger.Log.Infof("Blocked by blocklist: %s", domainName)
 			e.logQuery(domainName, clientIP, "block", "blocklist", threatResult)
 			e.metrics.RecordBlocked()
@@ -865,16 +891,11 @@ func (e *Engine) logQuery(domain, clientIP, action, reason string, tr threat.Res
 		statsAction = "allow"
 	}
 
-	go func() {
-		if err := e.queryLog.Save(q); err != nil {
-			logger.Log.Errorf("Failed to log query: %v", err)
-		}
-		if e.statistics != nil {
-			if err := e.statistics.IncrementCounter(statsAction); err != nil {
-				logger.Log.Errorf("Failed to increment stats: %v", err)
-			}
-		}
-	}()
+	// Persist through the bounded async writer rather than spawning a
+	// goroutine per query: under a burst, unbounded fan-out against the
+	// single SQLite file backing both planes amplified write contention.
+	// The writer never blocks this path (drop-with-counter on a full queue).
+	e.qlWriter.Submit(q, statsAction)
 }
 
 // recordBlocked feeds one blocked resolution into the infected-device alerter,

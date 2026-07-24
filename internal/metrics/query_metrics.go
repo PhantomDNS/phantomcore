@@ -26,6 +26,13 @@ type QueryMetrics struct {
 	// rotation path in currentSlice never has to convert an int length.
 	sliceCount uint32
 	current    atomic.Uint32
+
+	// queryLogDropped is a cumulative (never rotated/reset) counter of query
+	// log rows dropped by the bounded async writer when its buffer was full.
+	// Kept outside the rolling slices deliberately: drops should stay visible
+	// in Aggregate()/the /metrics scrape for the life of the process, not
+	// fall out of a 5-minute window like the query counters above.
+	queryLogDropped atomic.Uint64
 }
 
 const (
@@ -39,6 +46,12 @@ type AggregatedMetrics struct {
 	Blocked uint64
 
 	Buckets [BucketCount]uint64
+
+	// QueryLogDropped is the cumulative count of query log rows dropped
+	// because the bounded async writer's buffer was full. Unlike Total/
+	// Errors/Blocked this is not windowed: it is the running total since
+	// process start.
+	QueryLogDropped uint64
 }
 
 func NewQueryMetrics() *QueryMetrics {
@@ -111,6 +124,12 @@ func (m *QueryMetrics) RecordBlocked() {
 	s.blocked.Add(1)
 }
 
+// RecordQueryLogDropped increments the cumulative count of query log rows
+// dropped by the bounded async writer because its buffer was full.
+func (m *QueryMetrics) RecordQueryLogDropped() {
+	m.queryLogDropped.Add(1)
+}
+
 // Window returns the rolling window duration the metrics are aggregated over.
 func (m *QueryMetrics) Window() time.Duration {
 	return m.windowSize
@@ -137,6 +156,7 @@ func (m *QueryMetrics) Aggregate() AggregatedMetrics {
 			out.Buckets[b] += s.latency[b].Load()
 		}
 	}
+	out.QueryLogDropped = m.queryLogDropped.Load()
 	return out
 }
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"github.com/lopster568/phantomDNS/internal/blocklist"
+	"github.com/lopster568/phantomDNS/internal/fleet"
 	client "github.com/lopster568/phantomDNS/internal/grpc/controlplane"
 	"github.com/lopster568/phantomDNS/internal/inventory"
 	"github.com/lopster568/phantomDNS/internal/policy"
@@ -25,6 +26,11 @@ type APIHandler struct {
 	// endpoints. It defaults to blocklist.DefaultCatalog() and is a field so tests can
 	// substitute feeds pointing at local servers.
 	Catalog *blocklist.Catalog
+
+	// Fleet is the optional MSP fleet-status aggregator. It is nil unless the
+	// feature is opted in; routes check for nil before registering.
+	Fleet               *fleet.Store
+	FleetHeartbeatToken string
 }
 
 func NewAPIHandler(
@@ -32,13 +38,17 @@ func NewAPIHandler(
 	dataPlaneClient *client.Client,
 	deviceInventory *inventory.Inventory,
 	policyEngine *policy.Engine,
+	fleetStore *fleet.Store,
+	fleetHeartbeatToken string,
 ) *APIHandler {
 	return &APIHandler{
-		Store:           store,
-		DataPlaneClient: dataPlaneClient,
-		Inventory:       deviceInventory,
-		PolicyEngine:    policyEngine,
-		Catalog:         blocklist.DefaultCatalog(),
+		Store:               store,
+		DataPlaneClient:     dataPlaneClient,
+		Inventory:           deviceInventory,
+		PolicyEngine:        policyEngine,
+		Catalog:             blocklist.DefaultCatalog(),
+		Fleet:               fleetStore,
+		FleetHeartbeatToken: fleetHeartbeatToken,
 	}
 }
 
