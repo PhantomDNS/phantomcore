@@ -31,9 +31,10 @@ var latencyQuantiles = []float64{0.50, 0.95, 0.99}
 type Collector struct {
 	src Source
 
-	queries *prometheus.Desc
-	errors  *prometheus.Desc
-	latency *prometheus.Desc
+	queries         *prometheus.Desc
+	errors          *prometheus.Desc
+	latency         *prometheus.Desc
+	queryLogDropped *prometheus.Desc
 }
 
 // NewCollector builds a Collector reading from src.
@@ -55,6 +56,11 @@ func NewCollector(src Source) *Collector {
 			"Estimated DNS query latency percentiles over the rolling metrics window.",
 			[]string{"quantile"}, nil,
 		),
+		queryLogDropped: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "dns", "querylog_dropped_total"),
+			"Cumulative query log rows dropped because the bounded async writer's buffer was full.",
+			nil, nil,
+		),
 	}
 }
 
@@ -63,6 +69,7 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.queries
 	ch <- c.errors
 	ch <- c.latency
+	ch <- c.queryLogDropped
 }
 
 // Collect implements prometheus.Collector. It reads a fresh aggregate from the
@@ -72,6 +79,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 
 	ch <- prometheus.MustNewConstMetric(c.queries, prometheus.GaugeValue, float64(agg.Total))
 	ch <- prometheus.MustNewConstMetric(c.errors, prometheus.GaugeValue, float64(agg.Errors))
+	ch <- prometheus.MustNewConstMetric(c.queryLogDropped, prometheus.CounterValue, float64(agg.QueryLogDropped))
 
 	for _, q := range latencyQuantiles {
 		d := metrics.EstimatePercentile(agg.Buckets, q)

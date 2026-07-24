@@ -806,7 +806,8 @@ func TestLogQuery_ThreadsBlockReason(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mq := newMockQueryLog()
-			e := &Engine{queryLog: mq}
+			e := &Engine{queryLog: mq, qlWriter: newQueryLogWriter(mq, nil, nil, 0, 0)}
+			defer e.qlWriter.Close()
 
 			tr := threat.Result{DetectionMethod: "entropy", Reason: "high entropy"}
 			e.logQuery("example.com", "1.2.3.4", tt.action, tt.reason, tr)
@@ -833,6 +834,8 @@ func TestProcessDNSQuery_LogsBlockReason(t *testing.T) {
 		mq := newMockQueryLog()
 		e := newTestEngine(&mockBlocklist{blocked: map[string]bool{"ads.example.com": true}}, nil)
 		e.queryLog = mq
+		e.qlWriter = newQueryLogWriter(mq, nil, nil, 0, 0)
+		defer e.qlWriter.Close()
 
 		e.ProcessDNSQuery(&mockResponseWriter{}, newTestQuery("ads.example.com"))
 
@@ -848,6 +851,8 @@ func TestProcessDNSQuery_LogsBlockReason(t *testing.T) {
 		mq := newMockQueryLog()
 		e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, policies)
 		e.queryLog = mq
+		e.qlWriter = newQueryLogWriter(mq, nil, nil, 0, 0)
+		defer e.qlWriter.Close()
 
 		e.ProcessDNSQuery(&mockResponseWriter{}, newTestQuery("policy-blocked.com"))
 
@@ -863,6 +868,8 @@ func TestProcessDNSQuery_LogsBlockReason(t *testing.T) {
 		mq := newMockQueryLog()
 		e := newTestEngine(&mockBlocklist{blocked: map[string]bool{}}, policies)
 		e.queryLog = mq
+		e.qlWriter = newQueryLogWriter(mq, nil, nil, 0, 0)
+		defer e.qlWriter.Close()
 
 		e.ProcessDNSQuery(&mockResponseWriter{}, newTestQuery("redirect-me.com"))
 
