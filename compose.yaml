@@ -28,10 +28,12 @@ services:
     container_name: phantom-controlplane
     restart: unless-stopped
     ports:
-      - "8086:8086"
+      - "8086:8080"
       - "50051:50051"
     networks:
       - phantom-net
+    environment:
+      - DATAPLANE_GRPC_ADDR=phantom-dataplane:50051
     volumes:
       - ./data:/app/data
       - ./configs/config.yaml:/app/configs/config.yaml

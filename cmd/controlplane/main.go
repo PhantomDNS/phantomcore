@@ -30,8 +30,12 @@ func main() {
 	db.InitDB(dbPath)
 	repos := repositories.NewStore(db.DB)
 
-	// Initialize grpc client
-	c, err := client.New(config.DefaultConfig.DataPlane.GRPCServer.ListenAddr)
+	// Initialize grpc client. This dials the dataplane's gRPC server, which is
+	// a different address than the dataplane's own bind address
+	// (DataPlane.GRPCServer.ListenAddr) in any topology where the two planes
+	// are not the same host (e.g. docker compose). See ControlPlaneConfig.
+	// DataPlaneGRPCAddr's doc comment in internal/config/config.go.
+	c, err := client.New(config.DefaultConfig.ControlPlane.DataPlaneGRPCAddr)
 	if err != nil {
 		log.Fatalf("failed to connect to dataplane: %v", err)
 	}
