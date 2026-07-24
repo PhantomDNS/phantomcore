@@ -9,6 +9,7 @@ import (
 	"github.com/lopster568/phantomDNS/cmd/controlplane/middlewares"
 	"github.com/lopster568/phantomDNS/cmd/controlplane/routes"
 	"github.com/lopster568/phantomDNS/internal/config"
+	"github.com/lopster568/phantomDNS/internal/fleet"
 	client "github.com/lopster568/phantomDNS/internal/grpc/controlplane"
 	"github.com/lopster568/phantomDNS/internal/inventory"
 	"github.com/lopster568/phantomDNS/internal/license"
@@ -94,8 +95,23 @@ func main() {
 		_ = policyEngine.LoadPolicies(engPolicies)
 	}
 
+	// Optional MSP fleet aggregator (opt-in, OFF by default). Only wired up
+	// when explicitly enabled with a heartbeat token; otherwise the routes are
+	// never registered.
+	var fleetStore *fleet.Store
+	fleetCfg := fleet.LoadConfig()
+	if fleetCfg.Enabled {
+		if fleetCfg.HeartbeatToken == "" {
+			log.Println("fleet aggregator enabled but FLEET_HEARTBEAT_TOKEN is empty — feature disabled")
+			fleetCfg.Enabled = false
+		} else {
+			fleetStore = fleet.NewStore(fleetCfg.StaleAfter, nil)
+			log.Printf("fleet aggregator enabled (stale after %s)", fleetCfg.StaleAfter)
+		}
+	}
+
 	// Initialize Gin router
-	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory, policyEngine)
+	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory, policyEngine, fleetStore, fleetCfg.HeartbeatToken)
 	r := gin.Default()
 	r.Use(middlewares.Logger())
 
