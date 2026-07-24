@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -14,24 +15,27 @@ type policyFile struct {
 
 func LoadPoliciesFromFile(path string) ([]Policy, error) {
 	if path == "" {
-		return nil, fmt.Errorf("No file path provided")
+		return nil, fmt.Errorf("no file path provided")
 	}
 
-	f, err := os.ReadFile(path)
+	// path is an operator-supplied policy file location (config/CLI flag), not
+	// derived from untrusted request input. Reading an arbitrary path here is
+	// by design; filepath.Clean normalizes it before use.
+	f, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 -- operator-supplied policy file path, by design
 
 	if err != nil {
-		return nil, fmt.Errorf("Unable to read file")
+		return nil, fmt.Errorf("unable to read file")
 	}
 
 	var pf policyFile
 
 	if err := json.Unmarshal(f, &pf); err != nil {
-		return nil, fmt.Errorf("Failed to marshal, check JSON syntax")
+		return nil, fmt.Errorf("failed to marshal, check JSON syntax")
 	}
 
 	for i := range pf.Policies {
 		if err := ValidatePolicy(&pf.Policies[i]); err != nil {
-			return nil, fmt.Errorf("Invalid policy %d: %v", i, err)
+			return nil, fmt.Errorf("invalid policy %d: %v", i, err)
 		}
 		// normalize domains
 		for j := range pf.Policies[i].Domains {

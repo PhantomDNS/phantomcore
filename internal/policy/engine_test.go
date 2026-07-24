@@ -35,9 +35,11 @@ func TestEvaluate_AllowByDefault(t *testing.T) {
 
 func TestEvaluate_BlockExactDomain(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "block-ads", Action: "BLOCK", Priority: 100, Domains: []string{"ads.example.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("ads.example.com", "")
 	if err != nil {
@@ -53,9 +55,11 @@ func TestEvaluate_BlockExactDomain(t *testing.T) {
 
 func TestEvaluate_CaseInsensitive(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "p1", Action: "BLOCK", Priority: 100, Domains: []string{"ADS.Example.COM"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("ads.example.com", "")
 	if err != nil {
@@ -68,9 +72,11 @@ func TestEvaluate_CaseInsensitive(t *testing.T) {
 
 func TestEvaluate_TrailingDotNormalized(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "p1", Action: "BLOCK", Priority: 100, Domains: []string{"blocked.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("blocked.com.", "")
 	if err != nil {
@@ -83,9 +89,11 @@ func TestEvaluate_TrailingDotNormalized(t *testing.T) {
 
 func TestEvaluate_Redirect(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "redir", Action: "REDIRECT", Priority: 100, Redirect: "1.2.3.4", Domains: []string{"redirect.me"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("redirect.me", "")
 	if err != nil {
@@ -101,10 +109,12 @@ func TestEvaluate_Redirect(t *testing.T) {
 
 func TestEvaluate_HighestPriorityWins(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "low", Action: "ALLOW", Priority: 10, Domains: []string{"test.com"}},
 		{ID: "high", Action: "BLOCK", Priority: 200, Domains: []string{"test.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("test.com", "")
 	if err != nil {
@@ -120,10 +130,12 @@ func TestEvaluate_HighestPriorityWins(t *testing.T) {
 
 func TestEvaluate_TieBreakByID(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "zzz", Action: "ALLOW", Priority: 100, Domains: []string{"tie.com"}},
 		{ID: "aaa", Action: "BLOCK", Priority: 100, Domains: []string{"tie.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("tie.com", "")
 	if err != nil {
@@ -136,9 +148,11 @@ func TestEvaluate_TieBreakByID(t *testing.T) {
 
 func TestEvaluate_BloomNegativeShortCircuit(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "p1", Action: "BLOCK", Priority: 100, Domains: []string{"blocked.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Domain not in bloom filter should be allowed without hitting exact map
 	d, err := e.Evaluate("notblocked.com", "")
@@ -152,9 +166,11 @@ func TestEvaluate_BloomNegativeShortCircuit(t *testing.T) {
 
 func TestEvaluate_MultipleDomainsSamePolicy(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "multi", Action: "BLOCK", Priority: 100, Domains: []string{"a.com", "b.com", "c.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, domain := range []string{"a.com", "b.com", "c.com"} {
 		d, err := e.Evaluate(domain, "")
@@ -169,7 +185,9 @@ func TestEvaluate_MultipleDomainsSamePolicy(t *testing.T) {
 
 func TestEvaluate_EmptyPolicies(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{})
+	if err := e.LoadPolicies([]Policy{}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("anything.com", "")
 	if err != nil {
@@ -196,9 +214,11 @@ func TestPolicyDecision_Nil(t *testing.T) {
 
 func TestEvaluate_BlockByRegex(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "rx-block", Action: "BLOCK", Priority: 100, Regexes: []string{`.*\.doubleclick\.net$`}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("ads.doubleclick.net", "")
 	if err != nil {
@@ -223,10 +243,12 @@ func TestEvaluate_BlockByRegex(t *testing.T) {
 
 func TestEvaluate_RegexAllowOverridesByPriority(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "rx-block", Action: "BLOCK", Priority: 10, Regexes: []string{`.*\.tracking\.com$`}},
 		{ID: "rx-allow", Action: "ALLOW", Priority: 100, Regexes: []string{`.*\.tracking\.com$`}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("beacon.tracking.com", "")
 	if err != nil {
@@ -242,10 +264,12 @@ func TestEvaluate_RegexAllowOverridesByPriority(t *testing.T) {
 
 func TestEvaluate_RegexTieBreakByID(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "zzz-rx", Action: "ALLOW", Priority: 50, Regexes: []string{`^tie\.rx$`}},
 		{ID: "aaa-rx", Action: "BLOCK", Priority: 50, Regexes: []string{`^tie\.rx$`}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("tie.rx", "")
 	if err != nil {
@@ -261,9 +285,11 @@ func TestEvaluate_RegexTieBreakByID(t *testing.T) {
 
 func TestEvaluate_WildcardMatchesSubdomains(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "wild", Action: "BLOCK", Priority: 100, Domains: []string{"*.example.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Wildcard matches the base domain and any depth of subdomain.
 	for _, domain := range []string{"example.com", "sub.example.com", "a.b.example.com"} {
@@ -293,10 +319,12 @@ func TestEvaluate_WildcardMatchesSubdomains(t *testing.T) {
 
 func TestEvaluate_WildcardPriority(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "wild-block", Action: "BLOCK", Priority: 10, Domains: []string{"*.corp.com"}},
 		{ID: "wild-allow", Action: "ALLOW", Priority: 100, Domains: []string{"*.corp.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("intra.corp.com", "")
 	if err != nil {
@@ -309,11 +337,13 @@ func TestEvaluate_WildcardPriority(t *testing.T) {
 
 func TestEvaluate_ExactWinsOverRegex(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "exact", Action: "BLOCK", Priority: 10, Domains: []string{"exact.com"}},
 		// Catch-all regex at much higher priority; exact fast path must still win.
 		{ID: "rx-all", Action: "ALLOW", Priority: 999, Regexes: []string{`.*`}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("exact.com", "")
 	if err != nil {
@@ -337,10 +367,12 @@ func TestEvaluate_InvalidRegexDoesNotCrash(t *testing.T) {
 	e := NewPolicyEngine()
 	// Bad regex reaches the snapshot directly (LoadPolicies skips load-time
 	// validation); it must be skipped, and valid rules must still work.
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "bad-rx", Action: "BLOCK", Priority: 100, Regexes: []string{`[invalid(`}},
 		{ID: "good-rx", Action: "BLOCK", Priority: 100, Regexes: []string{`^good\.net$`}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// The invalid regex is skipped; querying anything must not panic.
 	d, err := e.Evaluate("harmless.com", "")
@@ -363,11 +395,13 @@ func TestEvaluate_InvalidRegexDoesNotCrash(t *testing.T) {
 
 func TestEvaluate_ExactStillWorksWithDynamicRulesPresent(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "exact-block", Action: "BLOCK", Priority: 100, Domains: []string{"ads.example.com"}},
 		{ID: "wild", Action: "BLOCK", Priority: 100, Domains: []string{"*.tracker.net"}},
 		{ID: "rx", Action: "BLOCK", Priority: 100, Regexes: []string{`^evil\.io$`}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("ads.example.com", "")
 	if err != nil {

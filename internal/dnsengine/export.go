@@ -339,7 +339,11 @@ func (h *webhookSink) Send(ev Event) error {
 	if err != nil {
 		return fmt.Errorf("post webhook: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			logger.Log.Warnf("event export: webhook response body close error: %v", cerr)
+		}
+	}()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
 	}

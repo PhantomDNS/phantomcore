@@ -260,13 +260,13 @@ func TestSyslogSink_UDP_WritesRFC5424(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen udp: %v", err)
 	}
-	defer pc.Close()
+	defer func() { _ = pc.Close() }() // best-effort cleanup, test outcome doesn't depend on it
 
 	sink, err := newSyslogSink("udp://" + pc.LocalAddr().String())
 	if err != nil {
 		t.Fatalf("newSyslogSink: %v", err)
 	}
-	defer sink.Close()
+	defer func() { _ = sink.Close() }() // best-effort cleanup, test outcome doesn't depend on it
 
 	if err := sink.Send(sampleEvent()); err != nil {
 		t.Fatalf("syslog Send: %v", err)

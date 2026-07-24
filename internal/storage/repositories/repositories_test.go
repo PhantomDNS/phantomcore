@@ -18,7 +18,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
-	db.AutoMigrate(
+	if err := db.AutoMigrate(
 		&models.BlocklistSource{},
 		&models.BlocklistSnapshot{},
 		&models.BlocklistEntry{},
@@ -26,7 +26,9 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&models.Statistics{},
 		&models.SystemState{},
 		&models.Policy{},
-	)
+	); err != nil {
+		t.Fatalf("failed to migrate test db: %v", err)
+	}
 	return db
 }
 
@@ -222,8 +224,12 @@ func TestQueryLogRepo_SaveAndListRecent(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewGormQueryLogRepo(db)
 
-	repo.Save(&models.DNSQuery{Domain: "first.com", ClientIP: "1.2.3.4", Action: "allow"})
-	repo.Save(&models.DNSQuery{Domain: "second.com", ClientIP: "1.2.3.4", Action: "block"})
+	if err := repo.Save(&models.DNSQuery{Domain: "first.com", ClientIP: "1.2.3.4", Action: "allow"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(&models.DNSQuery{Domain: "second.com", ClientIP: "1.2.3.4", Action: "block"}); err != nil {
+		t.Fatal(err)
+	}
 
 	queries, err := repo.ListRecent(10)
 	if err != nil {
@@ -243,7 +249,9 @@ func TestQueryLogRepo_ListRecent_Limit(t *testing.T) {
 	repo := NewGormQueryLogRepo(db)
 
 	for i := 0; i < 5; i++ {
-		repo.Save(&models.DNSQuery{Domain: "test.com", ClientIP: "1.2.3.4", Action: "allow"})
+		if err := repo.Save(&models.DNSQuery{Domain: "test.com", ClientIP: "1.2.3.4", Action: "allow"}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	queries, err := repo.ListRecent(3)
@@ -261,10 +269,11 @@ func TestStatisticsRepo_IncrementCounter(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewGormStatisticsRepo(db)
 
-	repo.IncrementCounter("allow")
-	repo.IncrementCounter("allow")
-	repo.IncrementCounter("block")
-	repo.IncrementCounter("redirect")
+	for _, action := range []string{"allow", "allow", "block", "redirect"} {
+		if err := repo.IncrementCounter(action); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	var stats models.Statistics
 	db.First(&stats, 1)
@@ -287,7 +296,9 @@ func TestStatisticsRepo_UnknownAction(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewGormStatisticsRepo(db)
 
-	repo.IncrementCounter("something_weird")
+	if err := repo.IncrementCounter("something_weird"); err != nil {
+		t.Fatal(err)
+	}
 
 	var stats models.Statistics
 	db.First(&stats, 1)
@@ -324,7 +335,9 @@ func TestSystemStateRepo_SetDNSEnabled(t *testing.T) {
 	repo := NewSystemStateRepo(db)
 
 	// Create initial state
-	repo.Get()
+	if _, err := repo.Get(); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := repo.SetDNSEnabled(true); err != nil {
 		t.Fatal(err)
@@ -340,7 +353,9 @@ func TestSystemStateRepo_SetPolicyEnabled(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewSystemStateRepo(db)
 
-	repo.Get()
+	if _, err := repo.Get(); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := repo.SetPolicyEnabled(true); err != nil {
 		t.Fatal(err)
@@ -393,8 +408,12 @@ func TestPolicyRepo_List(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewPolicyRepo(db)
 
-	repo.Create(&models.Policy{ID: "p1", Name: "P1", Action: "BLOCK", Priority: 10, Enabled: true})
-	repo.Create(&models.Policy{ID: "p2", Name: "P2", Action: "ALLOW", Priority: 200, Enabled: false})
+	if err := repo.Create(&models.Policy{ID: "p1", Name: "P1", Action: "BLOCK", Priority: 10, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Create(&models.Policy{ID: "p2", Name: "P2", Action: "ALLOW", Priority: 200, Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
 
 	list, err := repo.List()
 	if err != nil {
@@ -413,7 +432,9 @@ func TestPolicyRepo_Delete(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewPolicyRepo(db)
 
-	repo.Create(&models.Policy{ID: "del-me", Name: "Del", Action: "BLOCK"})
+	if err := repo.Create(&models.Policy{ID: "del-me", Name: "Del", Action: "BLOCK"}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := repo.Delete("del-me"); err != nil {
 		t.Fatal(err)
@@ -491,13 +512,17 @@ func TestBlocklistRepo_DeleteSourceCascades(t *testing.T) {
 	repo := NewBlocklistRepo(db)
 
 	src := &models.BlocklistSource{ID: "src1", Name: "Test", URL: "http://x", Format: "hosts", Enabled: true, CreatedAt: time.Now()}
-	repo.CreateSource(src)
+	if err := repo.CreateSource(src); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := []models.BlocklistEntry{
 		{Domain: "a.com", SourceID: "src1"},
 		{Domain: "b.com", SourceID: "src1"},
 	}
-	repo.SaveSnapshotWithEntries(*src, "hash", entries)
+	if _, err := repo.SaveSnapshotWithEntries(*src, "hash", entries); err != nil {
+		t.Fatal(err)
+	}
 
 	// Verify entries exist
 	count, _ := repo.CountEntriesBySource("src1")
@@ -506,7 +531,9 @@ func TestBlocklistRepo_DeleteSourceCascades(t *testing.T) {
 	}
 
 	// Delete source — should cascade
-	repo.DeleteSource("src1")
+	if err := repo.DeleteSource("src1"); err != nil {
+		t.Fatal(err)
+	}
 
 	count, _ = repo.CountEntriesBySource("src1")
 	if count != 0 {

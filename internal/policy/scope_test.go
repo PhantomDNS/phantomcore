@@ -6,10 +6,12 @@ import "testing"
 // applies to a query from a client inside its range.
 func TestEvaluate_ScopedPolicyMatchingClient(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "scoped", Action: "BLOCK", Priority: 100,
 			Domains: []string{"ads.example.com"}, ClientCIDRs: []string{"192.168.1.0/24"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("ads.example.com", "192.168.1.50:5353")
 	if err != nil {
@@ -27,10 +29,12 @@ func TestEvaluate_ScopedPolicyMatchingClient(t *testing.T) {
 // does NOT apply to a query from a client outside its range (default Allow).
 func TestEvaluate_ScopedPolicyNonMatchingClient(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "scoped", Action: "BLOCK", Priority: 100,
 			Domains: []string{"ads.example.com"}, ClientCIDRs: []string{"192.168.1.0/24"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("ads.example.com", "10.0.0.5:1234")
 	if err != nil {
@@ -45,9 +49,11 @@ func TestEvaluate_ScopedPolicyNonMatchingClient(t *testing.T) {
 // to every client, including one whose IP is unknown.
 func TestEvaluate_UnscopedPolicyAppliesToAll(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "all", Action: "BLOCK", Priority: 100, Domains: []string{"ads.example.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, client := range []string{"192.168.1.50:53", "10.0.0.5:53", "", "not-an-ip"} {
 		d, err := e.Evaluate("ads.example.com", client)
@@ -64,10 +70,12 @@ func TestEvaluate_UnscopedPolicyAppliesToAll(t *testing.T) {
 // matches when the client IP cannot be determined (fail-closed for scope).
 func TestEvaluate_ScopedPolicyUnknownClientIP(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "scoped", Action: "BLOCK", Priority: 100,
 			Domains: []string{"ads.example.com"}, ClientCIDRs: []string{"192.168.1.0/24"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	d, err := e.Evaluate("ads.example.com", "")
 	if err != nil {
@@ -82,10 +90,12 @@ func TestEvaluate_ScopedPolicyUnknownClientIP(t *testing.T) {
 // matches only that exact client.
 func TestEvaluate_ScopeSingleHostIP(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "host", Action: "BLOCK", Priority: 100,
 			Domains: []string{"ads.example.com"}, ClientCIDRs: []string{"192.168.1.10"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if d, _ := e.Evaluate("ads.example.com", "192.168.1.10:5000"); d.Action != ActionDeny {
 		t.Errorf("expected ActionDeny for exact host, got %v", d.Action)
@@ -100,12 +110,14 @@ func TestEvaluate_ScopeSingleHostIP(t *testing.T) {
 // while an unscoped policy on a different domain hits both.
 func TestEvaluate_MultipleClientsIndependent(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "kids-block", Action: "BLOCK", Priority: 100,
 			Domains: []string{"social.example.com"}, ClientCIDRs: []string{"192.168.10.0/24"}},
 		{ID: "global-block", Action: "BLOCK", Priority: 100,
 			Domains: []string{"malware.example.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	const kid = "192.168.10.5:53"
 	const staff = "192.168.20.9:53"
@@ -132,12 +144,14 @@ func TestEvaluate_MultipleClientsIndependent(t *testing.T) {
 // unscoped policy on the parent domain rather than stopping early.
 func TestEvaluate_ScopeWalksToParentPolicy(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "sub-scoped", Action: "REDIRECT", Priority: 100, Redirect: "1.2.3.4",
 			Domains: []string{"api.example.com"}, ClientCIDRs: []string{"192.168.1.0/24"}},
 		{ID: "parent-all", Action: "BLOCK", Priority: 100,
 			Domains: []string{"example.com"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Out-of-scope client: subdomain rule is skipped, parent BLOCK applies.
 	d, err := e.Evaluate("api.example.com", "10.0.0.1:53")
@@ -162,10 +176,12 @@ func TestEvaluate_ScopeWalksToParentPolicy(t *testing.T) {
 // bracketed host:port form handed out by the dataplane.
 func TestEvaluate_ScopeIPv6(t *testing.T) {
 	e := NewPolicyEngine()
-	e.LoadPolicies([]Policy{
+	if err := e.LoadPolicies([]Policy{
 		{ID: "v6", Action: "BLOCK", Priority: 100,
 			Domains: []string{"ads.example.com"}, ClientCIDRs: []string{"2001:db8::/32"}},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	if d, _ := e.Evaluate("ads.example.com", "[2001:db8::1]:53"); d.Action != ActionDeny {
 		t.Errorf("expected ActionDeny for in-scope IPv6 client, got %v", d.Action)

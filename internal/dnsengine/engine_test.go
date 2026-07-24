@@ -112,7 +112,10 @@ func newTestQuery(domain string) *dns.Msg {
 
 func newTestEngine(bl *mockBlocklist, policies []policy.Policy) *Engine {
 	pe := policy.NewPolicyEngine()
-	pe.LoadPolicies(policies)
+	// LoadPolicies never errors (buildSnapshot has no failure path); this
+	// helper has no *testing.T to report a failure with, and threading one
+	// through its ~40 call sites for an error that can't occur isn't worth it.
+	_ = pe.LoadPolicies(policies)
 
 	e := &Engine{
 		policyEngine: pe,

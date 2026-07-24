@@ -42,7 +42,7 @@ func (h *HTTPFetcher) Fetch(ctx context.Context, src parser.SourceConfig, knownE
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }() // best-effort; body is fully drained below or discarded on non-2xx
 
 		if resp.StatusCode == http.StatusNotModified {
 			// nothing changed

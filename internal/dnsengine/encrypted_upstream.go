@@ -119,7 +119,7 @@ func (d *dohClient) Exchange(q *dns.Msg, _ time.Duration) (*dns.Msg, error) {
 	if err != nil {
 		return nil, fmt.Errorf("doh exchange to %s: %w", d.endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // best-effort; body is fully drained below or discarded on non-2xx
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 512))

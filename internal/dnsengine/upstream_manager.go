@@ -160,7 +160,12 @@ func (m *UpstreamManager) prepareOutbound(q *dns.Msg, r *rand.Rand) (*dns.Msg, [
 func (m *UpstreamManager) Exchange(q *dns.Msg, timeout time.Duration, maxRetries int) (*dns.Msg, error) {
 	var r *rand.Rand
 	if m.dns0x20 {
-		r = rand.New(rand.NewSource(time.Now().UnixNano()))
+		// DNS 0x20 case randomization (see case_randomize.go) needs an
+		// unpredictable-to-an-off-path-attacker source, not cryptographic
+		// security, and randomizeCase/encodeCase0x20 are written as pure
+		// functions of a *rand.Rand so tests can seed them deterministically.
+		// crypto/rand has no seeding API and would break that contract.
+		r = rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404 -- non-cryptographic use (0x20 entropy), deterministic seeding required for tests
 	}
 	outbound, originals := m.prepareOutbound(q, r)
 

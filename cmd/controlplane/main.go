@@ -42,7 +42,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load system state: %v", err)
 	}
-	c.SetAcceptQueries(state.DNSEnabled)
+	if err := c.SetAcceptQueries(state.DNSEnabled); err != nil {
+		log.Printf("warning: failed to apply accept-queries state to dataplane: %v", err)
+	}
 
 	// Passive LAN device inventory (disabled by default; configured via
 	// INVENTORY_ENABLED and DHCP_LEASES_PATH).
