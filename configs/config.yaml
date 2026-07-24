@@ -36,8 +36,13 @@ dataplane:
   # Enable DNS 0x20 case-randomization on outbound upstream queries
   # (anti-spoofing hardening). Default false. Env override: DNS_0X20.
   dns_0x20: false
-  # Address for the Prometheus /metrics endpoint (defaults to 0.0.0.0:9153).
-  metrics_addr: "0.0.0.0:9153"
+  # Address for the Prometheus /metrics endpoint (defaults to 127.0.0.1:9153,
+  # loopback-only). Set this to 0.0.0.0:9153 (or a specific interface) to
+  # expose it beyond the host, e.g. to a remote scraper. Docker Compose
+  # deployments set this explicitly via METRICS_LISTEN_ADDR (see compose.yaml)
+  # since the container needs to bind 0.0.0.0 for the published port mapping
+  # to reach it. Env override: METRICS_LISTEN_ADDR.
+  metrics_addr: "127.0.0.1:9153"
   # Self-heal watchdog: probe cadence and consecutive-failure threshold before
   # recovery. Set watchdog_interval to "off" or "0" to disable. Overridable via
   # WATCHDOG_INTERVAL / WATCHDOG_FAILURE_THRESHOLD env vars.
