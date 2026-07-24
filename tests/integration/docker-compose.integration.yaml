@@ -11,11 +11,47 @@
 #     dataplane actually forwarded a query to a resolver set via the
 #     control-plane API (not just that the API call returned success).
 #
+# Also overrides both dataplane's and controlplane's /app/data mount from
+# compose.yaml's host bind mount (./data) to a named Docker volume. compose.yaml's
+# bind mount works fine once ./data exists with the right ownership (which it
+# does on a dev machine after the first `docker compose up`, since the
+# dataplane image's entrypoint chowns it), but on a fresh checkout — a CI
+# runner, or anyone's first run — the ./data directory doesn't exist yet.
+# Docker then auto-creates it as root, and the containers (which run as a
+# non-root UID) can't open/create the SQLite file in it: modernc.org/sqlite
+# surfaces that as "unable to open database file: out of memory (14)"
+# (SQLite's generic CANTOPEN, not an actual OOM). A named volume sidesteps
+# this: on first use, Docker seeds it from the *image's* copy of /app/data,
+# which the dataplane Dockerfile explicitly creates and chows to its non-root
+# user (`chown -R appuser:appgroup /app/data && chmod -R 775 /app/data`)
+# before that image is ever built into a container. Both services share the
+# one named volume, same as they share the one bind-mounted directory in
+# compose.yaml today (both open the same /app/data/phantomdns.db). Verified
+# (`docker compose config`) that Compose merges the services.*.volumes list by
+# mount target across -f files, so this cleanly replaces just the /app/data
+# entry and leaves the config.yaml/policies.json bind mounts from compose.yaml
+# untouched.
+#
+# This override is scoped to integration/CI runs on purpose: production
+# deployments keep the host bind mount so operators can back up or inspect
+# the SQLite file directly.
+#
 # Usage (from repo root):
 #   docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml up -d --build
 #   go test -tags=integration ./tests/integration/...
 #   docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml down -v
+volumes:
+  hydra-integration-data:
+
 services:
+  dataplane:
+    volumes:
+      - hydra-integration-data:/app/data
+
+  controlplane:
+    volumes:
+      - hydra-integration-data:/app/data
+
   blocklist-fixture:
     image: nginx:alpine
     container_name: hydra-blocklist-fixture

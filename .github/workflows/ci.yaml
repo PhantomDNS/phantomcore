@@ -146,6 +146,20 @@ jobs:
 
     - name: ⏳ Wait for services to become healthy
       run: |
+        COMPOSE="docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml"
+
+        dump_diagnostics() {
+          echo "::group::Container status"
+          $COMPOSE ps -a
+          echo "::endgroup::"
+          echo "::group::Last 50 log lines per container"
+          $COMPOSE logs --tail=50
+          echo "::endgroup::"
+          echo "::group::Full logs"
+          $COMPOSE logs
+          echo "::endgroup::"
+        }
+
         echo "Waiting for control-plane /health..."
         for i in $(seq 1 30); do
           if curl -sf http://127.0.0.1:8086/health > /dev/null; then
@@ -154,7 +168,7 @@ jobs:
           fi
           if [ "$i" -eq 30 ]; then
             echo "control-plane did not become healthy in time"
-            docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml logs
+            dump_diagnostics
             exit 1
           fi
           sleep 2
@@ -168,7 +182,7 @@ jobs:
           fi
           if [ "$i" -eq 30 ]; then
             echo "dataplane metrics did not become available in time"
-            docker compose -f compose.yaml -f tests/integration/docker-compose.integration.yaml logs
+            dump_diagnostics
             exit 1
           fi
           sleep 2
