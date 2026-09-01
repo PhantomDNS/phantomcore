@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,13 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	})
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
+	}
+	// SQLite ":memory:" gives each connection its own empty database, so
+	// concurrent tests need to be pinned to a single connection - matches
+	// production (see internal/storage/db.InitDB), which is single-writer
+	// anyway.
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
 	}
 	if err := db.AutoMigrate(
 		&models.BlocklistSource{},
@@ -309,6 +317,89 @@ func TestStatisticsRepo_UnknownAction(t *testing.T) {
 	}
 	if stats.AllowedQueries != 0 || stats.BlockedQueries != 0 || stats.RedirectedQueries != 0 {
 		t.Error("unknown action should not increment specific counters")
+	}
+}
+
+func TestStatisticsRepo_ConcurrentIncrement(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewGormStatisticsRepo(db)
+
+	const n = 50
+	var wg sync.WaitGroup
+	errCh := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := repo.IncrementCounter("allow"); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("IncrementCounter returned error under concurrency: %v", err)
+	}
+
+	var stats models.Statistics
+	if err := db.First(&stats, 1).Error; err != nil {
+		t.Fatalf("expected singleton row to exist: %v", err)
+	}
+	if stats.TotalQueries != n {
+		t.Errorf("expected %d total queries (no lost updates), got %d", n, stats.TotalQueries)
+	}
+	if stats.AllowedQueries != n {
+		t.Errorf("expected %d allowed queries, got %d", n, stats.AllowedQueries)
+	}
+}
+
+func TestStatisticsRepo_SeedSingleton_Idempotent(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewGormStatisticsRepo(db)
+
+	if err := repo.SeedSingleton(); err != nil {
+		t.Fatalf("first seed failed: %v", err)
+	}
+	if err := repo.IncrementCounter("block"); err != nil {
+		t.Fatal(err)
+	}
+	// Calling SeedSingleton again must not clobber existing counters
+	// (INSERT OR IGNORE, not INSERT OR REPLACE).
+	if err := repo.SeedSingleton(); err != nil {
+		t.Fatalf("second seed failed: %v", err)
+	}
+
+	var stats models.Statistics
+	db.First(&stats, 1)
+	if stats.TotalQueries != 1 || stats.BlockedQueries != 1 {
+		t.Errorf("expected counters preserved after reseed, got total=%d blocked=%d", stats.TotalQueries, stats.BlockedQueries)
+	}
+}
+
+func TestStatisticsRepo_SelfHealsAfterRowDeleted(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewGormStatisticsRepo(db)
+
+	if err := repo.IncrementCounter("allow"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the singleton row vanishing (volume wipe, manual DB surgery).
+	if err := db.Exec("DELETE FROM statistics WHERE id = 1").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.IncrementCounter("block"); err != nil {
+		t.Fatalf("IncrementCounter should self-heal a missing row, got error: %v", err)
+	}
+
+	var stats models.Statistics
+	if err := db.First(&stats, 1).Error; err != nil {
+		t.Fatalf("expected row to be recreated: %v", err)
+	}
+	if stats.TotalQueries != 1 || stats.BlockedQueries != 1 {
+		t.Errorf("expected fresh counters after reseed, got total=%d blocked=%d", stats.TotalQueries, stats.BlockedQueries)
 	}
 }
 

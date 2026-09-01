@@ -119,6 +119,14 @@ type Engine struct {
 	// DEVICE_ALERT_THRESHOLD is configured; always non-nil, so callers never
 	// need a nil check before Attach*.
 	alerter *alert.Alerter
+
+	// blockResponse selects how respondBlocked answers a blocked query:
+	// "zero" (A 0.0.0.0 / AAAA ::), "nxdomain" (RcodeNameError), or
+	// "refused" (RcodeRefused). Set from config.DataPlaneConfig.
+	// BlockResponseMode() in NewDNSEngine; the zero value ("") is treated
+	// the same as "zero" so an Engine built directly (as tests do) keeps
+	// the historical behaviour.
+	blockResponse string
 }
 
 // safeSearchTargets maps well-known search/video hostnames to their
@@ -249,7 +257,8 @@ func NewDNSEngine(cfg config.DataPlaneConfig, repos *repositories.Store, pE *pol
 		// Infected-device alerting (I-045). Off by default: enabled only when a
 		// positive DEVICE_ALERT_THRESHOLD is configured. A device resolver is
 		// attached later via AttachDeviceResolver.
-		alerter: alert.NewAlerter(alert.ConfigFromEnv(), nil, nil),
+		alerter:       alert.NewAlerter(alert.ConfigFromEnv(), nil, nil),
+		blockResponse: cfg.BlockResponseMode(),
 	}
 	e.setUpstreamExchanger(mgr)
 	if cfg.ServeStale {
@@ -327,23 +336,40 @@ func (e *Engine) Shutdown() {
 	e.qlWriter.Close() // nil-safe
 }
 
+// respondBlocked answers a blocked query per e.blockResponse:
+//
+//	zero      (default, and the zero value "") - A 0.0.0.0 / AAAA ::.
+//	            Browsers treat REFUSED as "try another DNS", but 0.0.0.0
+//	            causes an immediate connection failure (ERR_CONNECTION_REFUSED).
+//	nxdomain            - RcodeNameError. Browsers give up immediately with
+//	            DNS_PROBE_FINISHED_NXDOMAIN; Windows DNS Client caches it and
+//	            does not fall back to a secondary resolver (unlike refused).
+//	refused             - RcodeRefused. Kept for completeness; many home
+//	            routers and Windows fall back to a secondary DNS on REFUSED,
+//	            which silently bypasses every block, so do not use this
+//	            unless you have verified there is no secondary DNS.
 func (e *Engine) respondBlocked(w dns.ResponseWriter, r *dns.Msg, domain, reason string) {
 	m := new(dns.Msg)
-	m.SetReply(r)
-	// Return 0.0.0.0 / :: instead of REFUSED — browsers treat REFUSED as "try another DNS"
-	// but 0.0.0.0 causes an immediate connection failure (ERR_CONNECTION_REFUSED)
-	qtype := r.Question[0].Qtype
-	name := r.Question[0].Name
-	switch qtype {
-	case dns.TypeAAAA:
-		rr, err := dns.NewRR(name + " 60 IN AAAA ::")
-		if err == nil {
-			m.Answer = append(m.Answer, rr)
-		}
-	default: // TypeA and everything else
-		rr, err := dns.NewRR(name + " 60 IN A 0.0.0.0")
-		if err == nil {
-			m.Answer = append(m.Answer, rr)
+	switch e.blockResponse {
+	case "nxdomain":
+		m.SetRcode(r, dns.RcodeNameError)
+	case "refused":
+		m.SetRcode(r, dns.RcodeRefused)
+	default: // "zero", or the zero value "" for an Engine built without config
+		m.SetReply(r)
+		qtype := r.Question[0].Qtype
+		name := r.Question[0].Name
+		switch qtype {
+		case dns.TypeAAAA:
+			rr, err := dns.NewRR(name + " 60 IN AAAA ::")
+			if err == nil {
+				m.Answer = append(m.Answer, rr)
+			}
+		default: // TypeA and everything else
+			rr, err := dns.NewRR(name + " 60 IN A 0.0.0.0")
+			if err == nil {
+				m.Answer = append(m.Answer, rr)
+			}
 		}
 	}
 	if err := w.WriteMsg(m); err != nil {

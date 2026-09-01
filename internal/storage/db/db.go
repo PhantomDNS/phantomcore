@@ -36,6 +36,14 @@ func InitDB(path string) *gorm.DB {
 		log.Fatalf("migration failed: %v", err)
 	}
 
+	// Seed singleton rows that the runtime expects to exist. Idempotent.
+	if err := db.Exec(
+		"INSERT OR IGNORE INTO statistics (id, total_queries, blocked_queries, allowed_queries, redirected_queries, updated_at) VALUES (1, 0, 0, 0, 0, ?)",
+		time.Now(),
+	).Error; err != nil {
+		log.Fatalf("statistics seed failed: %v", err)
+	}
+
 	log.Println("Database connection established")
 
 	DB = db

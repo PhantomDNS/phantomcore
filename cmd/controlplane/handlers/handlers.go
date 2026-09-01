@@ -31,6 +31,12 @@ type APIHandler struct {
 	// feature is opted in; routes check for nil before registering.
 	Fleet               *fleet.Store
 	FleetHeartbeatToken string
+
+	// loginAttempts tracks per-client-IP failed login attempts for
+	// brute-force slowdown on POST /auth/login. Set eagerly by
+	// NewAPIHandler; access via loginRateLimiter(), which also covers
+	// APIHandlers constructed literally in tests.
+	loginAttempts *loginLimiter
 }
 
 func NewAPIHandler(
@@ -49,6 +55,7 @@ func NewAPIHandler(
 		Catalog:             blocklist.DefaultCatalog(),
 		Fleet:               fleetStore,
 		FleetHeartbeatToken: fleetHeartbeatToken,
+		loginAttempts:       newLoginLimiter(),
 	}
 }
 
@@ -59,4 +66,13 @@ func (h *APIHandler) catalog() *blocklist.Catalog {
 		h.Catalog = blocklist.DefaultCatalog()
 	}
 	return h.Catalog
+}
+
+// loginRateLimiter returns the handler's login attempt limiter, lazily
+// constructing one if unset (e.g. an APIHandler built directly in a test).
+func (h *APIHandler) loginRateLimiter() *loginLimiter {
+	if h.loginAttempts == nil {
+		h.loginAttempts = newLoginLimiter()
+	}
+	return h.loginAttempts
 }

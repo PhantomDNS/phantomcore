@@ -14,6 +14,7 @@ type StatisticsRepository interface {
 	Save(stat *models.Statistics) error
 	ListRecent(limit int) ([]models.Statistics, error)
 	IncrementCounter(action string) error
+	SeedSingleton() error
 }
 
 // Implementation
@@ -38,34 +39,63 @@ func (r *GormStatisticsRepo) ListRecent(limit int) ([]models.Statistics, error) 
 	return stats, err
 }
 
-// IncrementCounter increments the global counters (single-row statistics)
+// IncrementCounter increments the global counters (single-row statistics).
+//
+// Uses a single atomic UPDATE so concurrent callers (e.g. the query-log
+// writer's worker pool) cannot race each other into lost updates, or, on
+// cold boot, collide on duplicate INSERTs for id=1. The singleton row is
+// expected to already exist (seeded via SeedSingleton at startup); if it
+// doesn't, this call self-heals by seeding it and retrying once.
 func (r *GormStatisticsRepo) IncrementCounter(action string) error {
-	var stats models.Statistics
-
-	// Use single-row stats; create row if not exists (ID = 1)
-	if err := r.db.FirstOrCreate(&stats, models.Statistics{ID: 1}).Error; err != nil {
-		logger.Log.Error("Failed to get or create statistics row: " + err.Error())
-		return err
-	}
-
+	var bumpCol string
 	switch action {
 	case "allow":
-		stats.AllowedQueries++
+		bumpCol = "allowed_queries"
 	case "block":
-		stats.BlockedQueries++
+		bumpCol = "blocked_queries"
 	case "redirect":
-		stats.RedirectedQueries++
+		bumpCol = "redirected_queries"
 	default:
 		// treat unknown as total only
 	}
 
-	stats.TotalQueries++
-	stats.UpdatedAt = time.Now()
+	updates := map[string]interface{}{
+		"total_queries": gorm.Expr("total_queries + 1"),
+		"updated_at":    time.Now(),
+	}
+	if bumpCol != "" {
+		updates[bumpCol] = gorm.Expr(bumpCol + " + 1")
+	}
 
-	if err := r.db.Save(&stats).Error; err != nil {
-		logger.Log.Error("Failed to save statistics: " + err.Error())
-		return err
+	res := r.db.Model(&models.Statistics{}).Where("id = ?", 1).Updates(updates)
+	if res.Error != nil {
+		logger.Log.Error("Failed to increment statistics: " + res.Error.Error())
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		// Seed row is missing (first boot before SeedSingleton ran, or a
+		// volume wipe between binary restarts). Recreate it idempotently
+		// and retry the update once.
+		if err := r.SeedSingleton(); err != nil {
+			return err
+		}
+		res = r.db.Model(&models.Statistics{}).Where("id = ?", 1).Updates(updates)
+		if res.Error != nil {
+			logger.Log.Error("Failed to increment statistics after reseed: " + res.Error.Error())
+			return res.Error
+		}
 	}
 
 	return nil
+}
+
+// SeedSingleton inserts the statistics row with id=1 if it does not already
+// exist. Safe to call many times (INSERT OR IGNORE), including concurrently.
+func (r *GormStatisticsRepo) SeedSingleton() error {
+	// Raw SQL keeps the insert idempotent across drivers without pulling
+	// in clause.OnConflict, which behaves differently on SQLite.
+	return r.db.Exec(
+		"INSERT OR IGNORE INTO statistics (id, total_queries, blocked_queries, allowed_queries, redirected_queries, updated_at) VALUES (1, 0, 0, 0, 0, ?)",
+		time.Now(),
+	).Error
 }

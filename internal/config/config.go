@@ -132,6 +132,30 @@ type DataPlaneConfig struct {
 	// queue. <= 0 (the default) uses the package default (2). Env override:
 	// QUERY_LOG_WORKERS.
 	QueryLogWorkers int `yaml:"query_log_workers"`
+
+	// BlockResponse controls how a blocked query is answered: "zero"
+	// (default, A 0.0.0.0 / AAAA ::), "nxdomain" (RcodeNameError), or
+	// "refused" (RcodeRefused). Read via BlockResponseMode(), which
+	// validates the value and falls back to "zero" for anything else. Env
+	// override: BLOCK_RESPONSE.
+	BlockResponse string `yaml:"block_response"`
+
+	// Query-log retention bounds the dns_queries table so it does not grow
+	// without limit (a real concern on SD-card-backed deployments). Both
+	// limits are independent and each is disabled by setting it to 0.
+	// QueryLogRetentionDays deletes rows older than N days (default 7). Env
+	// override: QUERY_LOG_RETENTION_DAYS.
+	QueryLogRetentionDays int `yaml:"query_log_retention_days"`
+	// QueryLogMaxRows keeps at most N of the newest rows, trimming the
+	// oldest beyond that (default 1,000,000). This is insurance for when a
+	// sustained query rate outpaces the age-based limit above. Env
+	// override: QUERY_LOG_MAX_ROWS.
+	QueryLogMaxRows int64 `yaml:"query_log_max_rows"`
+	// QueryLogCleanupInterval is how often the retention loop runs, as a Go
+	// duration (default "1h"). Read via QueryLogCleanupIntervalDuration(),
+	// which falls back to 1h for an empty or unparseable value. Env
+	// override: QUERY_LOG_CLEANUP_INTERVAL.
+	QueryLogCleanupInterval string `yaml:"query_log_cleanup_interval"`
 }
 
 // GeoIPConfig configures optional ASN/GeoIP answer filtering. It is disabled
@@ -156,6 +180,41 @@ func (c DataPlaneConfig) WatchdogIntervalDuration() time.Duration {
 	if err != nil || d <= 0 {
 		logger.Log.Warnf("Invalid WATCHDOG_INTERVAL %q, disabling watchdog", c.WatchdogInterval)
 		return 0
+	}
+	return d
+}
+
+// BlockResponseMode validates BlockResponse and returns one of "zero",
+// "nxdomain", "refused". Anything else - including empty, which covers a
+// config file predating this field, and an Engine constructed directly in
+// tests without going through config at all - falls back to "zero", the
+// historical behaviour, so no existing deployment changes without an
+// explicit opt-in via BLOCK_RESPONSE.
+func (c DataPlaneConfig) BlockResponseMode() string {
+	switch strings.ToLower(strings.TrimSpace(c.BlockResponse)) {
+	case "nxdomain":
+		return "nxdomain"
+	case "refused":
+		return "refused"
+	case "", "zero":
+		return "zero"
+	default:
+		logger.Log.Warnf("Invalid BLOCK_RESPONSE %q, defaulting to \"zero\"", c.BlockResponse)
+		return "zero"
+	}
+}
+
+// QueryLogCleanupIntervalDuration parses QueryLogCleanupInterval into a
+// duration, defaulting to 1h when empty or unparseable.
+func (c DataPlaneConfig) QueryLogCleanupIntervalDuration() time.Duration {
+	s := strings.TrimSpace(c.QueryLogCleanupInterval)
+	if s == "" {
+		return time.Hour
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		logger.Log.Warnf("Invalid QUERY_LOG_CLEANUP_INTERVAL %q, using 1h", c.QueryLogCleanupInterval)
+		return time.Hour
 	}
 	return d
 }
@@ -266,6 +325,10 @@ func defaultConfig() *Config {
 			FastFluxIPThreshold:      8,
 			FastFluxTTLMaxSec:        300,
 			NRDRefreshInterval:       "6h",
+			BlockResponse:            "zero",
+			QueryLogRetentionDays:    7,
+			QueryLogMaxRows:          1_000_000,
+			QueryLogCleanupInterval:  "1h",
 			GRPCServer: GRPCServerConfig{
 				Port:       50051,
 				ListenAddr: "localhost:50051",
@@ -458,6 +521,26 @@ var DefaultConfig = func() *Config {
 		} else {
 			logger.Log.Warnf("Invalid QUERY_LOG_WORKERS=%q, ignoring: %v", v, err)
 		}
+	}
+	if v := os.Getenv("BLOCK_RESPONSE"); v != "" {
+		cfg.DataPlane.BlockResponse = v
+	}
+	if v := os.Getenv("QUERY_LOG_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.DataPlane.QueryLogRetentionDays = n
+		} else {
+			logger.Log.Warnf("Invalid QUERY_LOG_RETENTION_DAYS=%q, ignoring: %v", v, err)
+		}
+	}
+	if v := os.Getenv("QUERY_LOG_MAX_ROWS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.DataPlane.QueryLogMaxRows = n
+		} else {
+			logger.Log.Warnf("Invalid QUERY_LOG_MAX_ROWS=%q, ignoring: %v", v, err)
+		}
+	}
+	if v := os.Getenv("QUERY_LOG_CLEANUP_INTERVAL"); v != "" {
+		cfg.DataPlane.QueryLogCleanupInterval = v
 	}
 	return cfg
 }()

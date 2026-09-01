@@ -113,6 +113,11 @@ func main() {
 	// Initialize Gin router
 	apiHandler := handlers.NewAPIHandler(*repos, c, deviceInventory, policyEngine, fleetStore, fleetCfg.HeartbeatToken)
 	r := gin.Default()
+	// Trust no proxy headers: ClientIP() must be the socket peer, or the
+	// login rate limit keys off attacker-chosen X-Forwarded-For values.
+	if err := r.SetTrustedProxies(nil); err != nil {
+		log.Fatalf("failed to configure trusted proxies: %v", err)
+	}
 	r.Use(middlewares.Logger())
 
 	// CORS middleware (development-friendly). See cmd/controlplane/middlewares/cors.go
