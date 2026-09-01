@@ -97,6 +97,12 @@ func (m *mockQueryLog) Aggregate(from, to time.Time, topN int) (report.Aggregate
 	return report.Aggregates{}, nil
 }
 
+func (m *mockQueryLog) DeleteOlderThan(cutoff time.Time) (int64, error) { return 0, nil }
+
+func (m *mockQueryLog) EnforceRowCap(maxRows int64) (int64, error) { return 0, nil }
+
+func (m *mockQueryLog) Count() (int64, error) { return 0, nil }
+
 // waitSaved blocks until logQuery's goroutine persists a row (or times out).
 func (m *mockQueryLog) waitSaved(t *testing.T) *models.DNSQuery {
 	t.Helper()

@@ -85,6 +85,12 @@ func (r *recordingQueryLog) Aggregate(from, to time.Time, topN int) (report.Aggr
 	return report.Aggregates{}, nil
 }
 
+func (r *recordingQueryLog) DeleteOlderThan(cutoff time.Time) (int64, error) { return 0, nil }
+
+func (r *recordingQueryLog) EnforceRowCap(maxRows int64) (int64, error) { return 0, nil }
+
+func (r *recordingQueryLog) Count() (int64, error) { return int64(r.count()), nil }
+
 // recordingStats counts IncrementCounter calls per action.
 type recordingStats struct {
 	mu     sync.Mutex

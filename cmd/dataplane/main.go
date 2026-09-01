@@ -49,6 +49,12 @@ func main() {
 	// 2. Initialize Repositories
 	repos := repositories.NewStore(db.DB)
 
+	// 2b. Query-log retention — keep the dns_queries table (and the disk it
+	// lives on, e.g. a Pi's SD card) bounded. Without this it grows without
+	// limit. Configured via QUERY_LOG_RETENTION_DAYS / QUERY_LOG_MAX_ROWS /
+	// QUERY_LOG_CLEANUP_INTERVAL (see config.DataPlaneConfig).
+	startQueryLogRetention(repos.QueryLogs)
+
 	// 3. Blocklist Engine — load from DB sources, refresh periodically
 	blEngine := blocklist.NewEngine(repos.Blocklist)
 
@@ -291,6 +297,55 @@ func startWatchdog(engine *dnsengine.Engine) {
 			time.Sleep(500 * time.Millisecond)
 		}
 		wd.Start(context.Background())
+	}()
+}
+
+// startQueryLogRetention runs a background loop that bounds the query log
+// table by age and by row count, per config.DataPlaneConfig:
+//
+//	QueryLogRetentionDays   (default 7)   delete rows older than N days; 0 disables
+//	QueryLogMaxRows         (default 1e6) keep at most N newest rows; 0 disables
+//	QueryLogCleanupInterval (default 1h)  how often to run cleanup
+//
+// Runs once immediately (so a table grown fat before this build shipped is
+// pruned on the first boot that includes retention), then on the configured
+// interval.
+func startQueryLogRetention(repo repositories.QueryLogRepository) {
+	cfg := config.DefaultConfig.DataPlane
+	retentionDays := cfg.QueryLogRetentionDays
+	maxRows := cfg.QueryLogMaxRows
+	interval := cfg.QueryLogCleanupIntervalDuration()
+
+	cleanup := func() {
+		if retentionDays > 0 {
+			cutoff := time.Now().AddDate(0, 0, -retentionDays)
+			if n, err := repo.DeleteOlderThan(cutoff); err != nil {
+				logger.Log.Errorf("query log retention (age) failed: %v", err)
+			} else if n > 0 {
+				logger.Log.Infof("query log retention: deleted %d rows older than %d days", n, retentionDays)
+			}
+		}
+		if maxRows > 0 {
+			if n, err := repo.EnforceRowCap(maxRows); err != nil {
+				logger.Log.Errorf("query log retention (cap) failed: %v", err)
+			} else if n > 0 {
+				logger.Log.Infof("query log retention: trimmed %d rows over cap of %d", n, maxRows)
+			}
+		}
+	}
+
+	if retentionDays <= 0 && maxRows <= 0 {
+		logger.Log.Info("Query log retention disabled (QUERY_LOG_RETENTION_DAYS and QUERY_LOG_MAX_ROWS both 0)")
+		return
+	}
+
+	go func() {
+		cleanup()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanup()
+		}
 	}()
 }
 

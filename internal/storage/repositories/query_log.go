@@ -71,6 +71,16 @@ type QueryLogRepository interface {
 	// Aggregate computes period aggregates for the reporting engine. It
 	// satisfies report.Aggregator.
 	Aggregate(from, to time.Time, topN int) (report.Aggregates, error)
+
+	// Count returns the total number of rows in the query log table.
+	Count() (int64, error)
+	// DeleteOlderThan removes rows with a timestamp before cutoff and
+	// returns the number of rows deleted.
+	DeleteOlderThan(cutoff time.Time) (int64, error)
+	// EnforceRowCap keeps at most maxRows of the newest rows, deleting the
+	// oldest beyond that, and returns the number of rows deleted. maxRows
+	// <= 0 disables enforcement (no-op).
+	EnforceRowCap(maxRows int64) (int64, error)
 }
 
 // Implementation
@@ -135,4 +145,47 @@ func (r *GormQueryLogRepo) List(filter QueryLogFilter) ([]models.DNSQuery, int64
 	var queries []models.DNSQuery
 	err := q.Order("timestamp desc").Limit(limit).Offset(offset).Find(&queries).Error
 	return queries, total, err
+}
+
+// Count returns the number of rows in the query log table.
+func (r *GormQueryLogRepo) Count() (int64, error) {
+	var n int64
+	err := r.db.Model(&models.DNSQuery{}).Count(&n).Error
+	return n, err
+}
+
+// DeleteOlderThan removes query logs with a timestamp before cutoff and
+// returns the number of rows deleted. Timestamp is indexed, so this is a
+// ranged delete, not a full scan.
+func (r *GormQueryLogRepo) DeleteOlderThan(cutoff time.Time) (int64, error) {
+	res := r.db.Where("timestamp < ?", cutoff).Delete(&models.DNSQuery{})
+	return res.RowsAffected, res.Error
+}
+
+// EnforceRowCap keeps at most maxRows of the newest query logs, deleting the
+// oldest beyond that. This is disk insurance: a sustained query rate can
+// exceed any time-window estimate, and the underlying storage (e.g. a Pi's
+// SD card) must not fill. IDs are monotonic, so "newest" == "highest id".
+// Returns the number of rows deleted.
+func (r *GormQueryLogRepo) EnforceRowCap(maxRows int64) (int64, error) {
+	if maxRows <= 0 {
+		return 0, nil
+	}
+	// Find the id of the maxRows-th newest row; everything with a smaller
+	// id is surplus. OFFSET maxRows-1 lands on the last row we keep.
+	var threshold uint
+	err := r.db.Model(&models.DNSQuery{}).
+		Order("id desc").
+		Offset(int(maxRows - 1)).
+		Limit(1).
+		Pluck("id", &threshold).Error
+	if err != nil {
+		return 0, err
+	}
+	if threshold == 0 {
+		// Fewer than maxRows rows present; nothing to trim.
+		return 0, nil
+	}
+	res := r.db.Where("id < ?", threshold).Delete(&models.DNSQuery{})
+	return res.RowsAffected, res.Error
 }

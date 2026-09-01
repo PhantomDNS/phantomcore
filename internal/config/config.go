@@ -139,6 +139,23 @@ type DataPlaneConfig struct {
 	// validates the value and falls back to "zero" for anything else. Env
 	// override: BLOCK_RESPONSE.
 	BlockResponse string `yaml:"block_response"`
+
+	// Query-log retention bounds the dns_queries table so it does not grow
+	// without limit (a real concern on SD-card-backed deployments). Both
+	// limits are independent and each is disabled by setting it to 0.
+	// QueryLogRetentionDays deletes rows older than N days (default 7). Env
+	// override: QUERY_LOG_RETENTION_DAYS.
+	QueryLogRetentionDays int `yaml:"query_log_retention_days"`
+	// QueryLogMaxRows keeps at most N of the newest rows, trimming the
+	// oldest beyond that (default 1,000,000). This is insurance for when a
+	// sustained query rate outpaces the age-based limit above. Env
+	// override: QUERY_LOG_MAX_ROWS.
+	QueryLogMaxRows int64 `yaml:"query_log_max_rows"`
+	// QueryLogCleanupInterval is how often the retention loop runs, as a Go
+	// duration (default "1h"). Read via QueryLogCleanupIntervalDuration(),
+	// which falls back to 1h for an empty or unparseable value. Env
+	// override: QUERY_LOG_CLEANUP_INTERVAL.
+	QueryLogCleanupInterval string `yaml:"query_log_cleanup_interval"`
 }
 
 // GeoIPConfig configures optional ASN/GeoIP answer filtering. It is disabled
@@ -185,6 +202,21 @@ func (c DataPlaneConfig) BlockResponseMode() string {
 		logger.Log.Warnf("Invalid BLOCK_RESPONSE %q, defaulting to \"zero\"", c.BlockResponse)
 		return "zero"
 	}
+}
+
+// QueryLogCleanupIntervalDuration parses QueryLogCleanupInterval into a
+// duration, defaulting to 1h when empty or unparseable.
+func (c DataPlaneConfig) QueryLogCleanupIntervalDuration() time.Duration {
+	s := strings.TrimSpace(c.QueryLogCleanupInterval)
+	if s == "" {
+		return time.Hour
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		logger.Log.Warnf("Invalid QUERY_LOG_CLEANUP_INTERVAL %q, using 1h", c.QueryLogCleanupInterval)
+		return time.Hour
+	}
+	return d
 }
 
 type ControlPlaneConfig struct {
@@ -294,6 +326,9 @@ func defaultConfig() *Config {
 			FastFluxTTLMaxSec:        300,
 			NRDRefreshInterval:       "6h",
 			BlockResponse:            "zero",
+			QueryLogRetentionDays:    7,
+			QueryLogMaxRows:          1_000_000,
+			QueryLogCleanupInterval:  "1h",
 			GRPCServer: GRPCServerConfig{
 				Port:       50051,
 				ListenAddr: "localhost:50051",
@@ -489,6 +524,23 @@ var DefaultConfig = func() *Config {
 	}
 	if v := os.Getenv("BLOCK_RESPONSE"); v != "" {
 		cfg.DataPlane.BlockResponse = v
+	}
+	if v := os.Getenv("QUERY_LOG_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.DataPlane.QueryLogRetentionDays = n
+		} else {
+			logger.Log.Warnf("Invalid QUERY_LOG_RETENTION_DAYS=%q, ignoring: %v", v, err)
+		}
+	}
+	if v := os.Getenv("QUERY_LOG_MAX_ROWS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.DataPlane.QueryLogMaxRows = n
+		} else {
+			logger.Log.Warnf("Invalid QUERY_LOG_MAX_ROWS=%q, ignoring: %v", v, err)
+		}
+	}
+	if v := os.Getenv("QUERY_LOG_CLEANUP_INTERVAL"); v != "" {
+		cfg.DataPlane.QueryLogCleanupInterval = v
 	}
 	return cfg
 }()
