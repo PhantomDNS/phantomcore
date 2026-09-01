@@ -13,6 +13,12 @@ import (
 const (
 	loginMaxAttempts   = 5
 	loginLockoutWindow = 15 * time.Minute
+
+	// loginMaxTrackedIPs bounds the failures map so a flood of distinct
+	// source addresses cannot grow it without limit. When exceeded,
+	// expired records are swept; if still over, the oldest (closest to
+	// expiry) records are evicted first.
+	loginMaxTrackedIPs = 10000
 )
 
 // loginFailureRecord tracks failed login attempts from a single IP within
@@ -68,10 +74,34 @@ func (l *loginLimiter) recordFailure(ip string) {
 	now := l.now()
 	rec, ok := l.failures[ip]
 	if !ok || now.Sub(rec.windowStart) >= loginLockoutWindow {
+		if !ok && len(l.failures) >= loginMaxTrackedIPs {
+			l.pruneLocked(now)
+		}
 		rec = &loginFailureRecord{windowStart: now}
 		l.failures[ip] = rec
 	}
 	rec.count++
+}
+
+// pruneLocked drops expired records, then — if the map is still at
+// capacity — evicts the oldest records until one slot is free. Callers
+// must hold l.mu.
+func (l *loginLimiter) pruneLocked(now time.Time) {
+	for ip, rec := range l.failures {
+		if now.Sub(rec.windowStart) >= loginLockoutWindow {
+			delete(l.failures, ip)
+		}
+	}
+	for len(l.failures) >= loginMaxTrackedIPs {
+		oldestIP := ""
+		var oldest time.Time
+		for ip, rec := range l.failures {
+			if oldestIP == "" || rec.windowStart.Before(oldest) {
+				oldestIP, oldest = ip, rec.windowStart
+			}
+		}
+		delete(l.failures, oldestIP)
+	}
 }
 
 // recordSuccess clears ip's failure history, e.g. after a successful login.

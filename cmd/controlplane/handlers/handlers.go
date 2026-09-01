@@ -33,8 +33,9 @@ type APIHandler struct {
 	FleetHeartbeatToken string
 
 	// loginAttempts tracks per-client-IP failed login attempts for
-	// brute-force slowdown on POST /auth/login. Left nil until first use;
-	// access it via loginRateLimiter(), never directly.
+	// brute-force slowdown on POST /auth/login. Set eagerly by
+	// NewAPIHandler; access via loginRateLimiter(), which also covers
+	// APIHandlers constructed literally in tests.
 	loginAttempts *loginLimiter
 }
 
@@ -54,6 +55,7 @@ func NewAPIHandler(
 		Catalog:             blocklist.DefaultCatalog(),
 		Fleet:               fleetStore,
 		FleetHeartbeatToken: fleetHeartbeatToken,
+		loginAttempts:       newLoginLimiter(),
 	}
 }
 

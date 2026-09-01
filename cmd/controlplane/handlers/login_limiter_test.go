@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -104,5 +105,35 @@ func TestLoginLimiter_ConcurrentAccess(t *testing.T) {
 	}
 	for i := 0; i < 20; i++ {
 		<-done
+	}
+}
+
+func TestLoginLimiter_BoundsTrackedIPs(t *testing.T) {
+	clock := &fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	l := newLoginLimiter()
+	l.now = clock.now
+
+	for i := 0; i < loginMaxTrackedIPs; i++ {
+		l.recordFailure(fmt.Sprintf("10.0.%d.%d", i/250, i%250))
+	}
+	if len(l.failures) != loginMaxTrackedIPs {
+		t.Fatalf("tracked IPs = %d, want %d", len(l.failures), loginMaxTrackedIPs)
+	}
+
+	// A new IP at capacity must not grow the map; one record is evicted and
+	// the new failure is still recorded.
+	l.recordFailure("192.168.1.1")
+	if len(l.failures) > loginMaxTrackedIPs {
+		t.Errorf("map grew past cap: %d", len(l.failures))
+	}
+	if _, ok := l.failures["192.168.1.1"]; !ok {
+		t.Error("new failure was not recorded at capacity")
+	}
+
+	// Once the window lapses, the sweep drops expired records wholesale.
+	clock.advance(loginLockoutWindow + time.Second)
+	l.recordFailure("172.16.0.1")
+	if len(l.failures) != 1 {
+		t.Errorf("expired records not swept: len = %d, want 1", len(l.failures))
 	}
 }
