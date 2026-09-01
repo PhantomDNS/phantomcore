@@ -111,7 +111,19 @@ type loginRequest struct {
 }
 
 // Login validates the admin password and returns the API key.
+//
+// Brute-force protection: failed attempts from a client IP are tracked by
+// h.loginRateLimiter(); after loginMaxAttempts failures within
+// loginLockoutWindow, further attempts from that IP are rejected with 429
+// until the window elapses. A successful login clears the IP's history.
 func (h *APIHandler) Login(c *gin.Context) {
+	ip := c.ClientIP()
+	limiter := h.loginRateLimiter()
+	if !limiter.allowed(ip) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"status": "error", "error": "too many failed login attempts — try again later"})
+		return
+	}
+
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "password is required"})
@@ -120,15 +132,18 @@ func (h *APIHandler) Login(c *gin.Context) {
 
 	admin, err := h.Store.Auth.GetAdmin()
 	if err != nil {
+		limiter.recordFailure(ip)
 		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "invalid credentials"})
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.Password)); err != nil {
+		limiter.recordFailure(ip)
 		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "invalid credentials"})
 		return
 	}
 
+	limiter.recordSuccess(ip)
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data":   gin.H{"token": admin.APIKey},
