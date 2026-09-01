@@ -154,12 +154,37 @@ func (r *GormQueryLogRepo) Count() (int64, error) {
 	return n, err
 }
 
+// retentionDeleteBatchSize bounds each retention DELETE. With
+// MaxOpenConns=1, one unbounded DELETE over a multi-million-row backlog
+// (e.g. first boot after this feature ships) would hold the only SQLite
+// connection long enough to stall the query-log writer into dropping
+// entries; batches let its inserts interleave. Var, not const, so tests
+// can shrink it.
+var retentionDeleteBatchSize = 5000
+
+// deleteInBatches removes all rows matching cond/arg in bounded batches
+// and returns the total number of rows deleted.
+func (r *GormQueryLogRepo) deleteInBatches(cond string, arg interface{}) (int64, error) {
+	var total int64
+	for {
+		sub := r.db.Model(&models.DNSQuery{}).Select("id").
+			Where(cond, arg).Limit(retentionDeleteBatchSize)
+		res := r.db.Where("id IN (?)", sub).Delete(&models.DNSQuery{})
+		if res.Error != nil {
+			return total, res.Error
+		}
+		total += res.RowsAffected
+		if res.RowsAffected < int64(retentionDeleteBatchSize) {
+			return total, nil
+		}
+	}
+}
+
 // DeleteOlderThan removes query logs with a timestamp before cutoff and
 // returns the number of rows deleted. Timestamp is indexed, so this is a
 // ranged delete, not a full scan.
 func (r *GormQueryLogRepo) DeleteOlderThan(cutoff time.Time) (int64, error) {
-	res := r.db.Where("timestamp < ?", cutoff).Delete(&models.DNSQuery{})
-	return res.RowsAffected, res.Error
+	return r.deleteInBatches("timestamp < ?", cutoff)
 }
 
 // EnforceRowCap keeps at most maxRows of the newest query logs, deleting the
@@ -176,7 +201,7 @@ func (r *GormQueryLogRepo) EnforceRowCap(maxRows int64) (int64, error) {
 	var threshold uint
 	err := r.db.Model(&models.DNSQuery{}).
 		Order("id desc").
-		Offset(int(maxRows - 1)).
+		Offset(int(maxRows-1)).
 		Limit(1).
 		Pluck("id", &threshold).Error
 	if err != nil {
@@ -186,6 +211,5 @@ func (r *GormQueryLogRepo) EnforceRowCap(maxRows int64) (int64, error) {
 		// Fewer than maxRows rows present; nothing to trim.
 		return 0, nil
 	}
-	res := r.db.Where("id < ?", threshold).Delete(&models.DNSQuery{})
-	return res.RowsAffected, res.Error
+	return r.deleteInBatches("id < ?", threshold)
 }

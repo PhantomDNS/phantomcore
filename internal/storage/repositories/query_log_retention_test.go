@@ -140,3 +140,30 @@ func TestQueryLog_Count(t *testing.T) {
 		t.Errorf("Count() = %d, want 2", n)
 	}
 }
+
+func TestQueryLog_DeleteOlderThan_Batched(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewGormQueryLogRepo(db)
+
+	orig := retentionDeleteBatchSize
+	retentionDeleteBatchSize = 3
+	defer func() { retentionDeleteBatchSize = orig }()
+
+	now := time.Now()
+	for i := 0; i < 10; i++ {
+		db.Create(&models.DNSQuery{Domain: "old.com", Action: "allow", Timestamp: now.AddDate(0, 0, -8)})
+	}
+	db.Create(&models.DNSQuery{Domain: "new.com", Action: "allow", Timestamp: now})
+
+	deleted, err := repo.DeleteOlderThan(now.AddDate(0, 0, -7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 10 {
+		t.Errorf("deleted %d, want 10 across multiple batches", deleted)
+	}
+	n, _ := repo.Count()
+	if n != 1 {
+		t.Errorf("remaining rows = %d, want 1", n)
+	}
+}
