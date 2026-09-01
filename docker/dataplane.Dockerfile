@@ -16,7 +16,7 @@ COPY . .
 RUN go build -o dataplane ./cmd/dataplane
 
 # --- Runtime stage ---
-FROM alpine:latest
+FROM alpine:3.22
 WORKDIR /app
 
 # # Add CA certs (needed if you ever do HTTPS requests inside container)

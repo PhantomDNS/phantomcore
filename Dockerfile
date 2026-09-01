@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /bin/control
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /bin/dataplane ./cmd/dataplane
 
 # Runtime
-FROM alpine:3.20
+FROM alpine:3.22
 WORKDIR /app
 
 RUN apk add --no-cache ca-certificates
