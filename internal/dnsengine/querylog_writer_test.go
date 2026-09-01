@@ -106,6 +106,8 @@ func (s *recordingStats) IncrementCounter(action string) error {
 	return nil
 }
 
+func (s *recordingStats) SeedSingleton() error { return nil }
+
 func (s *recordingStats) get(action string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
