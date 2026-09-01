@@ -158,6 +158,44 @@ func TestDefaultConfigMetricsAddr(t *testing.T) {
 	}
 }
 
+// TestDefaultConfigBlockResponse verifies BLOCK_RESPONSE defaults to "zero"
+// (A 0.0.0.0 / AAAA ::) so existing deployments are unaffected unless an
+// operator opts in.
+func TestDefaultConfigBlockResponse(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.DataPlane.BlockResponse != "zero" {
+		t.Fatalf("defaultConfig().DataPlane.BlockResponse = %q, want %q", cfg.DataPlane.BlockResponse, "zero")
+	}
+	if got := cfg.DataPlane.BlockResponseMode(); got != "zero" {
+		t.Fatalf("BlockResponseMode() = %q, want %q", got, "zero")
+	}
+}
+
+func TestBlockResponseMode(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"empty defaults to zero", "", "zero"},
+		{"zero", "zero", "zero"},
+		{"mixed case zero", "ZeRo", "zero"},
+		{"nxdomain", "nxdomain", "nxdomain"},
+		{"uppercase nxdomain", "NXDOMAIN", "nxdomain"},
+		{"refused", "refused", "refused"},
+		{"padded refused", "  refused  ", "refused"},
+		{"unrecognized falls back to zero", "garbage", "zero"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := DataPlaneConfig{BlockResponse: tt.value}
+			if got := c.BlockResponseMode(); got != tt.want {
+				t.Errorf("BlockResponseMode() with BlockResponse=%q = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestApplyTLSEnv(t *testing.T) {
 	t.Run("empty env fills default self-signed dir", func(t *testing.T) {
 		t.Setenv("TLS_CERT_FILE", "")

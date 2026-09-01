@@ -431,6 +431,63 @@ func TestRespondBlocked(t *testing.T) {
 	}
 }
 
+// TestRespondBlocked_Modes covers the three BLOCK_RESPONSE values wired
+// through Engine.blockResponse: "zero" (default), "nxdomain", "refused".
+func TestRespondBlocked_Modes(t *testing.T) {
+	cases := []struct {
+		mode       string
+		wantRcode  int
+		wantAnswer bool // does the message carry an A/AAAA answer record
+	}{
+		{mode: "zero", wantRcode: dns.RcodeSuccess, wantAnswer: true},
+		{mode: "nxdomain", wantRcode: dns.RcodeNameError, wantAnswer: false},
+		{mode: "refused", wantRcode: dns.RcodeRefused, wantAnswer: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
+			e := newTestEngine(nil, nil)
+			e.blockResponse = tc.mode
+			w := &mockResponseWriter{}
+			r := newTestQuery("test.com")
+
+			e.respondBlocked(w, r, "test.com", "test")
+
+			if w.msg == nil {
+				t.Fatal("no response written")
+			}
+			if got := w.msg.Rcode; got != tc.wantRcode {
+				t.Errorf("rcode: got %d, want %d", got, tc.wantRcode)
+			}
+			hasAnswer := len(w.msg.Answer) > 0
+			if hasAnswer != tc.wantAnswer {
+				t.Errorf("answer presence: got %v, want %v", hasAnswer, tc.wantAnswer)
+			}
+		})
+	}
+}
+
+// TestRespondBlocked_DefaultsToZero verifies that an Engine built without
+// going through NewDNSEngine (blockResponse left at its zero value "") keeps
+// the historical 0.0.0.0/:: behaviour, so existing tests and callers that
+// construct Engine directly are unaffected.
+func TestRespondBlocked_DefaultsToZero(t *testing.T) {
+	e := newTestEngine(nil, nil)
+	if e.blockResponse != "" {
+		t.Fatalf("expected zero-value blockResponse in a directly-constructed Engine, got %q", e.blockResponse)
+	}
+	w := &mockResponseWriter{}
+	r := newTestQuery("test.com")
+
+	e.respondBlocked(w, r, "test.com", "test-reason")
+
+	if w.msg == nil {
+		t.Fatal("expected response from respondBlocked")
+	}
+	if !isBlockedResponse(w.msg) {
+		t.Error("expected blocked response (0.0.0.0 A record)")
+	}
+}
+
 func TestRespondRedirect(t *testing.T) {
 	e := newTestEngine(nil, nil)
 	w := &mockResponseWriter{}

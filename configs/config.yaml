@@ -51,6 +51,12 @@ dataplane:
   # Env overrides: QUERY_LOG_BUFFER_SIZE, QUERY_LOG_WORKERS.
   query_log_buffer_size: 1024
   query_log_workers: 2
+  # How a blocked query is answered: "zero" (default, A 0.0.0.0 / AAAA ::),
+  # "nxdomain" (RcodeNameError), or "refused" (RcodeRefused - many home
+  # routers and Windows fall back to a secondary DNS on REFUSED, silently
+  # bypassing every block, so do not use it unless you've verified there is
+  # no secondary DNS). Env override: BLOCK_RESPONSE.
+  block_response: "zero"
   # Self-heal watchdog: probe cadence and consecutive-failure threshold before
   # recovery. Set watchdog_interval to "off" or "0" to disable. Overridable via
   # WATCHDOG_INTERVAL / WATCHDOG_FAILURE_THRESHOLD env vars.

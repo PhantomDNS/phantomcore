@@ -132,6 +132,13 @@ type DataPlaneConfig struct {
 	// queue. <= 0 (the default) uses the package default (2). Env override:
 	// QUERY_LOG_WORKERS.
 	QueryLogWorkers int `yaml:"query_log_workers"`
+
+	// BlockResponse controls how a blocked query is answered: "zero"
+	// (default, A 0.0.0.0 / AAAA ::), "nxdomain" (RcodeNameError), or
+	// "refused" (RcodeRefused). Read via BlockResponseMode(), which
+	// validates the value and falls back to "zero" for anything else. Env
+	// override: BLOCK_RESPONSE.
+	BlockResponse string `yaml:"block_response"`
 }
 
 // GeoIPConfig configures optional ASN/GeoIP answer filtering. It is disabled
@@ -158,6 +165,26 @@ func (c DataPlaneConfig) WatchdogIntervalDuration() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// BlockResponseMode validates BlockResponse and returns one of "zero",
+// "nxdomain", "refused". Anything else - including empty, which covers a
+// config file predating this field, and an Engine constructed directly in
+// tests without going through config at all - falls back to "zero", the
+// historical behaviour, so no existing deployment changes without an
+// explicit opt-in via BLOCK_RESPONSE.
+func (c DataPlaneConfig) BlockResponseMode() string {
+	switch strings.ToLower(strings.TrimSpace(c.BlockResponse)) {
+	case "nxdomain":
+		return "nxdomain"
+	case "refused":
+		return "refused"
+	case "", "zero":
+		return "zero"
+	default:
+		logger.Log.Warnf("Invalid BLOCK_RESPONSE %q, defaulting to \"zero\"", c.BlockResponse)
+		return "zero"
+	}
 }
 
 type ControlPlaneConfig struct {
@@ -266,6 +293,7 @@ func defaultConfig() *Config {
 			FastFluxIPThreshold:      8,
 			FastFluxTTLMaxSec:        300,
 			NRDRefreshInterval:       "6h",
+			BlockResponse:            "zero",
 			GRPCServer: GRPCServerConfig{
 				Port:       50051,
 				ListenAddr: "localhost:50051",
@@ -458,6 +486,9 @@ var DefaultConfig = func() *Config {
 		} else {
 			logger.Log.Warnf("Invalid QUERY_LOG_WORKERS=%q, ignoring: %v", v, err)
 		}
+	}
+	if v := os.Getenv("BLOCK_RESPONSE"); v != "" {
+		cfg.DataPlane.BlockResponse = v
 	}
 	return cfg
 }()
