@@ -200,8 +200,16 @@ func TestLoad_TamperedTokenFallsBackToCommunity(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	token, _ := Sign(newTestClaims(base, 30*24*time.Hour), priv)
-	// Corrupt the signature segment.
-	tampered := token[:len(token)-2] + "AA"
+	// Corrupt one character mid-signature, guaranteed to change the decoded
+	// bytes. (Appending "AA" over the last two chars was a no-op for the
+	// ~0.4% of random signatures whose trailing padding bits already
+	// matched, making this test flake in CI.)
+	i := len(token) - 10
+	replacement := byte('A')
+	if token[i] == replacement {
+		replacement = 'B'
+	}
+	tampered := token[:i] + string(replacement) + token[i+1:]
 
 	l := Load(Options{Token: tampered, PublicKey: pub, Now: fixedNow(base)})
 	s := l.Status()
