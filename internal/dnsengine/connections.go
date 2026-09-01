@@ -192,7 +192,8 @@ func (p *UpstreamPool) getTCPConn() (*net.TCPConn, int, error) {
 }
 
 // releaseTCPConn releases the connection at index idx back to the pool.
-// If hadErr is true, the connection is closed and the slot becomes nil.
+// If hadErr is true, the connection is closed and the slot becomes nil so
+// the next caller dials fresh; either way the slot is freed for reuse.
 func (p *UpstreamPool) releaseTCPConn(idx int, hadErr bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -202,13 +203,11 @@ func (p *UpstreamPool) releaseTCPConn(idx int, hadErr bool) {
 		return
 	}
 
-	if hadErr {
-		if p.conns[idx] != nil {
-			_ = p.conns[idx].Close()
-			p.conns[idx] = nil
-		}
-		p.inUse[idx] = false
+	if hadErr && p.conns[idx] != nil {
+		_ = p.conns[idx].Close()
+		p.conns[idx] = nil
 	}
+	p.inUse[idx] = false
 }
 
 // Exchange implements the UDP-fastpath -> TCP-fallback behavior.
