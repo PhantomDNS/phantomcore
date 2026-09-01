@@ -32,14 +32,14 @@ func TestUpstreamPool_ReleaseTCPConn_FreesSlotOnSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start test listener: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	acceptForever(t, ln)
 
 	pool, err := NewUpstreamPool(ln.Addr().String(), 1)
 	if err != nil {
 		t.Fatalf("NewUpstreamPool failed: %v", err)
 	}
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	conn1, idx1, err := pool.getTCPConn()
 	if err != nil {
@@ -70,14 +70,14 @@ func TestUpstreamPool_ReleaseTCPConn_ClosesOnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start test listener: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	acceptForever(t, ln)
 
 	pool, err := NewUpstreamPool(ln.Addr().String(), 1)
 	if err != nil {
 		t.Fatalf("NewUpstreamPool failed: %v", err)
 	}
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	conn1, idx1, err := pool.getTCPConn()
 	if err != nil {
@@ -107,14 +107,14 @@ func TestUpstreamPool_TCPPool_DoesNotExhaustUnderRepeatedSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start test listener: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	acceptForever(t, ln)
 
 	pool, err := NewUpstreamPool(ln.Addr().String(), 2)
 	if err != nil {
 		t.Fatalf("NewUpstreamPool failed: %v", err)
 	}
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 
 	for i := 0; i < 10; i++ {
 		_, idx, err := pool.getTCPConn()
